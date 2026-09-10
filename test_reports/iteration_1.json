@@ -1,0 +1,20 @@
+{
+  "summary": "Validated live API core flow and mobile Expo web flow: auth, bilingual toggle, navigation, booking with manual address, dispatch persistence, Orders, and invoice.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [{"flow": "Order tracking", "issue": "Orders cards show a dispatch status label and invoice action, but no tracking entry/timeline action despite the requested tracking flow; backend status_history is not rendered.", "affected_testIDs": ["tab-orders"]}],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_moontir_regression.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": ["Add an Orders tracking entry and render status_history/current status for active orders."],
+  "critical_code_review_comments": ["frontend/src/api.ts reads EXPO_PUBLIC_BACKEND_URL/backendUrl rather than the specified EXPO_BACKEND_URL; current preview works because EXPO_PUBLIC_BACKEND_URL is configured, but deployment configuration should be aligned.", "JWT_SECRET has a development fallback and backend logs show an insecure key-length warning; production must provide a 32+ byte JWT_SECRET."],
+  "updated_files": ["/app/backend/tests/test_moontir_regression.py", "/app/test_reports/iteration_1.json"],
+  "success_rate": {"backend": "100% (2/2)", "frontend": "100% for tested flows"},
+  "seed_data_creation": "Created one TEST_ prefixed temporary customer, vehicle, and order through the public API; no cleanup endpoint exists.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Live preview https://moontir-client.preview.emergentagent.com. Supplied customer login and mobile viewport 375x667 passed. Booking used manual address; geocode/location-denial and sign-out were not exercised in this run.",
+  "rca_of_issue": "Order tracking UI omission is visible in OrderCard: it renders a hard-coded Dispatch active label and invoice button, but never maps order.status_history or provides a tracking navigation/modal. Backend already returns status and status_history."
+}

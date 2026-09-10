@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 3: validated new pricing/quote flow, PATCH /api/me profile update, vehicle-type multiplier applied to /api/orders, and existing vehicles/orders/geocode endpoints. Ran 18 pytest cases against the live preview backend, all passed. Mobile Playwright walkthrough (375x667) exercised login -> home -> booking 5 steps -> confirm -> toast -> Orders list -> invoice modal (separated SERVICE TIMELINE + INVOICE DETAIL) -> Profile edit name/save/language toggle. Leaflet map iframe renders on step 3.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Orders (post-confirm)", "issues": ["In-app success toast overlaps the 'SERVICE LOG' eyebrow/title area right after tab switch; consider adding top offset (e.g. respect insets.top + eyebrow height) so the toast does not sit over the section heading. Reference: /app/frontend/src/components/Toast.tsx."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_moontir_regression.py",
+    "/app/test_reports/pytest/pytest_results_iteration3.xml"
+  ],
+  "action_items": [
+    "OPTIONAL polish: adjust Toast top offset so it does not overlap the current screen's section eyebrow/title after tab navigation.",
+    "OPTIONAL: align frontend/src/api.ts to also read EXPO_BACKEND_URL (not only EXPO_PUBLIC_BACKEND_URL) to match spec, though current preview works."
+  ],
+  "critical_code_review_comments": [
+    "server.py price_breakdown correctly emits '<Type> handling surcharge' items only for multipliers > 1; verified Sedan=275000 no surcharge and SUV=344000 surcharge 69000.",
+    "PATCH /api/me returns UserOut Pydantic model (no _id leak) and persists name across GET /api/me.",
+    "create_order now reuses price_breakdown with vehicle.type, storing items[] and total on the order; confirmed via list GET.",
+    "JWT secret still shows a dev fallback warning in supervisor logs; not a blocker but recommend production strong secret."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_moontir_regression.py",
+    "/app/test_reports/iteration_3.json"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% for tested flows"},
+  "seed_data_creation": "Registered a TEST_<uuid>@example.com user with vehicles (Sedan/MPV/SUV/Pickup/Truck) and two TEST orders via pytest. No cleanup endpoint exists; data prefixed with TEST_ for later removal.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Live preview https://moontir-client.preview.emergentagent.com. Test creds in /app/memory/test_credentials.md. Booking wizard testIDs booking-service-<id>, booking-vehicle-<id>, address-input, address-map, date-<val>, slot-<val>, confirm-order. Profile: profile-name, profile-save, profile-language. Invoice: order-open-<id>, invoice-total. Map: address-map has iframe fallback on web.",
+  "rca_of_issue": "No open bug this iteration. Prior tracking-timeline gap is resolved: InvoiceModal now renders a 'SERVICE TIMELINE' section iterating over order.status_history followed by 'INVOICE DETAIL' with items[] and total, as seen in screenshots."
+}

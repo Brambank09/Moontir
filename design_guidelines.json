@@ -1,0 +1,212 @@
+{
+  "app_name": "Moontir",
+  "personality": "7 Dark-First Utility DARK (Moonlit Automotive Theme)",
+  "personality_one_liner": "A nocturnal lunar-lit command surface for on-demand vehicle care, blending deep slate blacks with electric moonlit cyan accents and frosted glass depth.",
+  "color": {
+    "surface": "#0C0E14",
+    "onSurface": "#F4F5F7",
+    "surfaceSecondary": "#151821",
+    "onSurfaceSecondary": "#C5C8D0",
+    "surfaceTertiary": "#1F2330",
+    "onSurfaceTertiary": "#8F94A3",
+    "surfaceInverse": "#F4F5F7",
+    "onSurfaceInverse": "#0C0E14",
+    "brand": "#3B82F6",
+    "brandPrimary": "#2563EB",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#1D4ED8",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "rgba(37, 99, 235, 0.15)",
+    "onBrandTertiary": "#60A5FA",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#3B82F6",
+    "onInfo": "#FFFFFF",
+    "border": "rgba(255, 255, 255, 0.08)",
+    "borderStrong": "rgba(37, 99, 235, 0.5)",
+    "divider": "rgba(255, 255, 255, 0.05)",
+    "muted": "#8F94A3",
+    "onBrand": "#FFFFFF",
+    "moonGlow": "#93C5FD"
+  },
+  "typography": {
+    "displayFontFamily": "BarlowCondensed_600SemiBold",
+    "textFontFamily": "Satoshi-Regular",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous touch spacing with compact metric density for operational speed",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 8,
+    "md": 14,
+    "lg": 22,
+    "pill": 999
+  },
+  "shadow_tier": 2,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Use frosted glass headers over scrolling content",
+      "Apply translucent cards with subtle light borders over dark backgrounds",
+      "Ensure ≥75% surface tint opacity under blur for absolute readability"
+    ],
+    "dont's": [
+      "Avoid pure black screens; use obsidian/slate gradients",
+      "Do not blur form inputs or body text",
+      "Never use unreadable text on bright neon highlights"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth",
+      "purpose": "Email/password authentication with bilingual EN/ID toggle and lunar branding backdrop.",
+      "states": {
+        "loading": "Checking credentials with spinner",
+        "empty": "Clean input form ready for entry",
+        "error": "Inline toast alert for invalid login with retry button"
+      },
+      "layout": "Vertical stack with top-right language toggle, hero moonlit branding header, form inputs, and secure sign-in CTA."
+    },
+    {
+      "name": "Home",
+      "purpose": "Command center for service browsing, active vehicle status, and quick booking triggers.",
+      "states": {
+        "loading": "Skeleton placeholders for services and vehicle cards",
+        "empty": "Prompt to add first vehicle and select service package",
+        "error": "Connection error banner with retry action"
+      },
+      "layout": "Scrollable feed with sticky glass header, hero moonlit car banner, quick service category pills, and featured detailing tiers."
+    },
+    {
+      "name": "ServiceSelection",
+      "purpose": "Detailed browsing and customization of 4-wheeled vehicle detailing and maintenance packages.",
+      "states": {
+        "loading": "Loading service packages list",
+        "empty": "No services available in region message",
+        "error": "Failed to fetch service catalog with retry button"
+      },
+      "layout": "Categorized tabbed list with expandable service cards, inclusions checklist, and sticky bottom price summary with Book CTA."
+    },
+    {
+      "name": "VehicleManagement",
+      "purpose": "Select or add 4-wheeled vehicles (Sedan, SUV, Luxury, Van) with license plate and make/model details.",
+      "states": {
+        "loading": "Loading saved garage vehicles",
+        "empty": "Empty garage illustration with 'Add Vehicle' CTA",
+        "error": "Failed to sync garage data with retry button"
+      },
+      "layout": "Grid/List of garage vehicles with quick select radio, plus floating button to add new vehicle modal with manual form."
+    },
+    {
+      "name": "AddressSchedule",
+      "purpose": "Home service location selection via map/manual form and date/time time slot scheduling.",
+      "states": {
+        "loading": "Fetching GPS location and available slots",
+        "empty": "Prompt to set pin or enter address manually",
+        "error": "Location services disabled warning with manual entry fallback"
+      },
+      "layout": "Split map header preview with manual address inputs below, followed by horizontal date selector and time slot grid."
+    },
+    {
+      "name": "OrderConfirmation",
+      "purpose": "Comprehensive order review without payment (service summary, vehicle, home address, schedule) prior to dispatch.",
+      "states": {
+        "loading": "Calculating summary details",
+        "empty": "No order summary found",
+        "error": "Failed to generate confirmation token with retry"
+      },
+      "layout": "Receipt-style card stack with itemized breakdown, location map snapshot, and sticky 'Confirm Dispatch' button."
+    },
+    {
+      "name": "OrderTracking",
+      "purpose": "Real-time service status tracking from dispatch to arrival, execution, and completion.",
+      "states": {
+        "loading": "Connecting to live dispatch feed",
+        "empty": "No active service orders in progress",
+        "error": "Connection lost; reconnecting to live status..."
+      },
+      "layout": "Interactive map tracker header with vertical progress timeline (Dispatched -> Arrived -> Detailing -> Completed) and specialist contact card."
+    },
+    {
+      "name": "OrderHistory",
+      "purpose": "Log of past and cancelled vehicle maintenance orders with quick re-order and invoice access.",
+      "states": {
+        "loading": "Loading order archive list",
+        "empty": "No past maintenance history illustration with service CTA",
+        "error": "Failed to retrieve order logs with retry"
+      },
+      "layout": "Chronological list of service history cards with status badges (Completed, Cancelled), total cost, and invoice action."
+    },
+    {
+      "name": "InvoiceDetail",
+      "purpose": "Detailed itemized invoice view for completed services with bilingual export support.",
+      "states": {
+        "loading": "Generating invoice document",
+        "empty": "Invoice details unavailable",
+        "error": "Failed to load invoice file with retry"
+      },
+      "layout": "Document card with company letterhead, itemized service breakdown, vehicle specs, and sticky 'Download PDF / Print' action."
+    }
+  ],
+  "images": {
+    "hero_banner": {
+      "url": "https://images.unsplash.com/photo-1624912150907-b85b9b6547c5?auto=format&fit=crop&q=85&w=1200",
+      "dark": "https://images.unsplash.com/photo-1624912150907-b85b9b6547c5?auto=format&fit=crop&q=85&w=1200",
+      "alt": "Moonlit luxury vehicle detailing garage environment"
+    },
+    "empty_state": {
+      "url": "https://images.unsplash.com/photo-1737021093698-8baeb3d04eaa?auto=format&fit=crop&q=85&w=800",
+      "dark": "https://images.unsplash.com/photo-1737021093698-8baeb3d04eaa?auto=format&fit=crop&q=85&w=800",
+      "alt": "Dark modern parking garage empty state visual"
+    }
+  },
+  "haptics": {
+    "events": {
+      "button_press": "light",
+      "tab_switch": "selection",
+      "order_confirm": "medium",
+      "status_update": "heavy"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build the application 'Moontir' as an on-demand 4-wheeled vehicle service and detailing app with a moon-themed modern UI/UX.",
+    "Adhere strictly to Personality 7 (Dark-First Utility DARK) combined with glassmorphism over deep obsidian/slate backgrounds (#0C0E14) and moonlit cyan accents (#3B82F6, #93C5FD).",
+    "Implement bilingual support (Indonesian / English) with an instant header toggle across all core screens.",
+    "Ensure zero payment flow as per user choice; order confirmation creates dispatch orders directly.",
+    "Include full support for manual address forms plus device location/map integration.",
+    "Incorporate sticky bottom action CTAs on all booking and checkout screens with proper safe-area bottom padding.",
+    "Ensure all interactive elements have touch targets >= 44x44pt and use Phosphor icons consistently."
+  ]
+}
