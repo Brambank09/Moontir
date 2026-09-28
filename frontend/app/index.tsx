@@ -22,6 +22,15 @@ const slots = ["09:00 – 11:00", "11:30 – 13:30", "14:00 – 16:00", "16:30 �
 const nextDates = Array.from({ length: 5 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() + i + 1); return { value: d.toISOString().slice(0, 10), day: d.toLocaleDateString("en-US", { weekday: "short" }), idDay: d.toLocaleDateString("id-ID", { weekday: "short" }), number: d.getDate() }; });
 const HERO_IMG = "https://images.unsplash.com/photo-1601362840469-51e4d8d58785?w=800&q=70&auto=format";
 
+// A dispatch order is treated as "delivered" when its schedule date is today or earlier.
+// The customer can then mark it completed and rate the specialist.
+const isDelivered = (order: Order) => {
+  if (order.status === "completed") return true;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const scheduled = new Date(`${order.schedule_date}T00:00:00`);
+  return scheduled.getTime() <= today.getTime();
+};
+
 export default function Index() {
   const { colors } = useTheme(); const styles = useStyles(); const insets = useSafeAreaInsets(); const toast = useToast();
   const [lang, setLangState] = useState<Lang>("en"); const t = copy[lang];
@@ -37,6 +46,7 @@ export default function Index() {
   const [vehicleForm, setVehicleForm] = useState<VehiclePayload>({ nickname: "", make: "", model: "", year: "", plate: "", type: "Sedan" });
   const [confirmDelete, setConfirmDelete] = useState<Vehicle | null>(null);
   const [invoice, setInvoice] = useState<Order | null>(null);
+  const [rateFor, setRateFor] = useState<Order | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [serviceFilter, setServiceFilter] = useState<GroupFilter>("all");
   const [serviceSearch, setServiceSearch] = useState("");
@@ -149,6 +159,28 @@ export default function Index() {
     finally { setBusy(false); }
   };
 
+  const applyOrderUpdate = (updated: Order) => {
+    setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+    setInvoice((prev) => (prev && prev.id === updated.id ? updated : prev));
+    setRateFor((prev) => (prev && prev.id === updated.id ? updated : prev));
+  };
+
+  const completeOrder = async (order: Order) => {
+    if (!token) return;
+    setBusy(true);
+    try { const updated = await api.completeOrder(token, order.id); applyOrderUpdate(updated); toast.show(t.completedToast, "success"); }
+    catch (e) { toast.show(e instanceof Error ? e.message : "Update failed.", "error"); }
+    finally { setBusy(false); }
+  };
+
+  const submitRating = async (order: Order, stars: number, note: string) => {
+    if (!token) return;
+    setBusy(true);
+    try { const updated = await api.rateOrder(token, order.id, { stars, note }); applyOrderUpdate(updated); toast.show(`${t.ratingSaved} · ${stars} ${t.stars}`, "success"); setRateFor(null); }
+    catch (e) { toast.show(e instanceof Error ? e.message : "Rating failed.", "error"); }
+    finally { setBusy(false); }
+  };
+
   const logout = async () => { await storage.secureRemove(TOKEN_KEY); setToken(null); setUser(null); setScreen("home"); };
 
   if (loading) return <View style={styles.loading}><MoontirLogo width={180} height={44} /><ActivityIndicator size="small" color={colors.brand} style={{ marginTop: 22 }} /><Text style={styles.brandKicker}>{t.welcome}</Text></View>;
@@ -158,7 +190,7 @@ export default function Index() {
   const body = screen === "home" ? <Home user={user} services={services} orders={orders} vehicles={vehicles} t={t} lang={lang} book={() => openBooking()} select={openBooking} goServices={() => setScreen("services")} goOrders={() => setScreen("orders")} goServicesFiltered={(g: GroupFilter) => { setServiceFilter(g); setScreen("services"); }} />
     : screen === "services" ? <Catalog services={services} t={t} lang={lang} book={openBooking} filter={serviceFilter} setFilter={setServiceFilter} search={serviceSearch} setSearch={setServiceSearch} />
     : screen === "garage" ? <Garage vehicles={vehicles} t={t} add={openAddVehicle} edit={openEditVehicle} ask={setConfirmDelete} />
-    : screen === "orders" ? <OrderList orders={orders} t={t} invoice={setInvoice} />
+    : screen === "orders" ? <OrderList orders={orders} t={t} invoice={setInvoice} rate={setRateFor} complete={completeOrder} busy={busy} />
     : <Profile user={user} t={t} lang={lang} setLang={setLang} logout={logout} save={updateProfile} busy={busy} orders={orders} openOrder={setInvoice} />;
 
   return (
@@ -176,7 +208,8 @@ export default function Index() {
 
       <VehicleModal state={vehicleSheet} close={() => setVehicleSheet({ open: false, edit: null })} form={vehicleForm} setForm={setVehicleForm} save={saveVehicle} t={t} busy={busy} error={error} />
       <ConfirmModal vehicle={confirmDelete} close={() => setConfirmDelete(null)} confirm={deleteVehicle} t={t} busy={busy} />
-      <InvoiceModal order={invoice} close={() => setInvoice(null)} t={t} lang={lang} />
+      <InvoiceModal order={invoice} close={() => setInvoice(null)} t={t} lang={lang} rate={setRateFor} complete={completeOrder} busy={busy} />
+      <RateSheet order={rateFor} close={() => setRateFor(null)} submit={submitRating} t={t} busy={busy} />
     </View>
   );
 }
@@ -452,7 +485,7 @@ function Garage({ vehicles, t, add, edit, ask }: any) {
 
 /* ---------------- ORDERS ---------------- */
 
-function OrderList({ orders, t, invoice }: any) {
+function OrderList({ orders, t, invoice, rate, complete, busy }: any) {
   const styles = useStyles(); const { colors } = useTheme();
   return (
     <>
@@ -460,7 +493,7 @@ function OrderList({ orders, t, invoice }: any) {
       <Text style={styles.muted}>{copy.en === t ? "Every dispatch and invoice in one place." : "Semua dispatch dan invoice kamu."}</Text>
       {orders.length ? (
         <View style={{ gap: 12, marginTop: 14 }}>
-          {orders.map((o: Order) => <OrderRow key={o.id} order={o} t={t} onPress={() => invoice(o)} />)}
+          {orders.map((o: Order) => <OrderRow key={o.id} order={o} t={t} onPress={() => invoice(o)} rate={rate} complete={complete} busy={busy} />)}
         </View>
       ) : (
         <View style={styles.empty}>
@@ -473,17 +506,63 @@ function OrderList({ orders, t, invoice }: any) {
   );
 }
 
-function OrderRow({ order, t, onPress }: any) {
+function OrderRow({ order, t, onPress, rate, complete, busy }: any) {
   const styles = useStyles(); const { colors } = useTheme();
+  const delivered = isDelivered(order);
+  const done = order.status === "completed";
+  const canRate = delivered && !order.rating;
   return (
-    <Pressable testID={`order-${order.id}`} style={styles.orderRow} onPress={onPress}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.rowTitle}>{order.service_name}</Text>
-        <Text style={styles.rowSub}>{order.vehicle.make} {order.vehicle.model} · {order.schedule_date} · {order.schedule_time}</Text>
-        <Text style={styles.total}>{money(order.total)}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.onSurface} />
-    </Pressable>
+    <View testID={`order-${order.id}`} style={styles.orderCard}>
+      <Pressable style={styles.orderTopRow} onPress={onPress}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>{order.service_name}</Text>
+          <Text style={styles.rowSub}>{order.vehicle.make} {order.vehicle.model} · {order.schedule_date} · {order.schedule_time}</Text>
+          <Text style={styles.total}>{money(order.total)}</Text>
+        </View>
+        <View style={[styles.statusPill, done ? styles.statusPillDone : delivered ? styles.statusPillWarn : null]}>
+          <Text style={styles.statusPillText}>{done ? t.completed.toUpperCase() : delivered ? t.completed.toUpperCase() : t.inService.toUpperCase()}</Text>
+        </View>
+      </Pressable>
+
+      {order.rating ? (
+        <View style={styles.ratingRow}>
+          <Stars value={order.rating.stars} />
+          <Text style={styles.ratingText} numberOfLines={2}>{order.rating.note ? `“${order.rating.note}”` : `${t.ratedLabel} ${order.rating.stars} ${t.stars}`}</Text>
+        </View>
+      ) : delivered && (rate || complete) ? (
+        <View style={styles.orderActions}>
+          {!done && complete && (
+            <Pressable testID={`complete-${order.id}`} style={[styles.altBtn, { flex: 1 }]} onPress={() => complete(order)} disabled={busy}>
+              <Ionicons name="checkmark-outline" size={15} color={colors.onSurface} />
+              <Text style={styles.altBtnText}>{t.markComplete}</Text>
+            </Pressable>
+          )}
+          {canRate && rate && (
+            <Pressable testID={`rate-${order.id}`} style={[styles.smallCta, { flex: 1 }]} onPress={() => rate(order)}>
+              <Ionicons name="star-outline" size={15} color={colors.onBrand} />
+              <Text style={styles.smallCtaText}>{t.rateSpecialist}</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function Stars({ value, size = 16, interactive, onChange }: { value: number; size?: number; interactive?: boolean; onChange?: (n: number) => void }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flexDirection: "row", gap: 4 }}>
+      {[1, 2, 3, 4, 5].map((n) => {
+        const filled = n <= value;
+        const inner = <Ionicons name={filled ? "star" : "star-outline"} size={size} color={filled ? colors.brand : colors.muted} />;
+        return interactive ? (
+          <Pressable key={n} testID={`star-${n}`} hitSlop={6} onPress={() => onChange?.(n)}>{inner}</Pressable>
+        ) : (
+          <View key={n}>{inner}</View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -732,9 +811,11 @@ function ReviewRow({ icon, label, value }: any) {
 
 /* ---------------- INVOICE MODAL ---------------- */
 
-function InvoiceModal({ order, close, t, lang }: any) {
+function InvoiceModal({ order, close, t, lang, rate, complete, busy }: any) {
   const styles = useStyles(); const { colors } = useTheme(); const insets = useSafeAreaInsets();
   if (!order) return null;
+  const delivered = isDelivered(order);
+  const done = order.status === "completed";
   return (
     <Modal visible animationType="slide" onRequestClose={close}>
       <View style={[styles.modal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -762,6 +843,32 @@ function InvoiceModal({ order, close, t, lang }: any) {
             ))}
           </View>
 
+          {order.rating ? (
+            <>
+              <View style={styles.sectionHead}><Ionicons name="star-outline" size={17} color={colors.onSurface} /><Text style={styles.sectionHeadText}>{t.rateSpecialist.toUpperCase()}</Text></View>
+              <View style={styles.ratingCard}>
+                <Stars value={order.rating.stars} size={20} />
+                {order.rating.note ? <Text style={styles.ratingCardNote}>“{order.rating.note}”</Text> : null}
+                <Text style={styles.muted}>{new Date(order.rating.rated_at).toLocaleString(lang === "id" ? "id-ID" : "en-US")}</Text>
+              </View>
+            </>
+          ) : delivered ? (
+            <View style={{ marginTop: 16, flexDirection: "row", gap: 10 }}>
+              {!done && complete && (
+                <Pressable testID={`invoice-complete-${order.id}`} style={[styles.altBtn, { flex: 1 }]} onPress={() => complete(order)} disabled={busy}>
+                  <Ionicons name="checkmark-outline" size={15} color={colors.onSurface} />
+                  <Text style={styles.altBtnText}>{t.markComplete}</Text>
+                </Pressable>
+              )}
+              {rate && (
+                <Pressable testID={`invoice-rate-${order.id}`} style={[styles.smallCta, { flex: 1 }]} onPress={() => rate(order)}>
+                  <Ionicons name="star-outline" size={15} color={colors.onBrand} />
+                  <Text style={styles.smallCtaText}>{t.rateSpecialist}</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
+
           <View style={styles.sectionHead}><Ionicons name="document-text-outline" size={17} color={colors.onSurface} /><Text style={styles.sectionHeadText}>{t.invoiceHeading.toUpperCase()}</Text></View>
           <Text style={styles.rowTitle}>{order.service_name}</Text>
           <Text style={styles.rowSub}>{order.vehicle.make} {order.vehicle.model} · {order.vehicle.plate} · {order.vehicle.type}</Text>
@@ -785,6 +892,52 @@ function InvoiceModal({ order, close, t, lang }: any) {
           </View>
           <Text style={styles.unpaid}>{t.unpaid}</Text>
         </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function RateSheet({ order, close, submit, t, busy }: any) {
+  const insets = useSafeAreaInsets(); const styles = useStyles(); const { colors } = useTheme();
+  const [stars, setStars] = useState<number>(order?.rating?.stars ?? 0);
+  const [note, setNote] = useState<string>(order?.rating?.note ?? "");
+  useEffect(() => {
+    setStars(order?.rating?.stars ?? 0);
+    setNote(order?.rating?.note ?? "");
+  }, [order?.id, order?.rating?.stars, order?.rating?.note]);
+  if (!order) return null;
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={close}>
+      <View style={styles.backdrop}>
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 14 }]}>
+          <View style={styles.handle} />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{t.rateTitle}</Text>
+            <Pressable testID="rate-close" style={styles.iconButton} onPress={close}><Ionicons name="close" size={22} color={colors.onSurface} /></Pressable>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 20, gap: 14 }}>
+            <Text style={styles.muted}>{t.rateSub}</Text>
+            <View style={styles.rateOrderCard}>
+              <Ionicons name="person-circle-outline" size={26} color={colors.onSurface} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>{order.service_name}</Text>
+                <Text style={styles.rowSub}>{order.vehicle.make} {order.vehicle.model} · {order.schedule_date}</Text>
+              </View>
+            </View>
+            <View style={styles.starsWrap}>
+              <Stars value={stars} interactive size={34} onChange={setStars} />
+              {stars > 0 && <Text style={styles.starsCount}>{stars} / 5</Text>}
+            </View>
+            <View style={[styles.inputWrap, styles.multilineWrap]}>
+              <Ionicons name="chatbubble-ellipses-outline" size={17} color={colors.muted} />
+              <TextInput testID="rate-note" value={note} onChangeText={setNote} multiline placeholder={t.rateNotePlaceholder} placeholderTextColor={colors.muted} style={styles.textInput} maxLength={500} />
+            </View>
+            <Pressable testID="rate-submit" onPress={() => submit(order, stars, note)} disabled={busy || stars === 0} style={({ pressed }) => [styles.button, (pressed || busy || stars === 0) && styles.dim]}>
+              <Text style={styles.buttonText}>{busy ? "…" : t.submitRating}</Text>
+              {!busy && <Ionicons name="arrow-forward" size={16} color={colors.onBrandPrimary} />}
+            </Pressable>
+          </ScrollView>
+        </View>
       </View>
     </Modal>
   );
@@ -960,6 +1113,24 @@ const useStyles = makeStyles((colors) => StyleSheet.create({
   outlineCtaText: { color: colors.onSurface, fontWeight: "800", fontSize: 13 },
 
   orderRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+
+  orderCard: { padding: 14, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, gap: 12 },
+  orderTopRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  statusPill: { paddingHorizontal: 10, minHeight: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  statusPillWarn: { backgroundColor: colors.brandTertiary, borderColor: colors.borderStrong },
+  statusPillDone: { backgroundColor: colors.brand, borderColor: colors.brand },
+  statusPillText: { color: colors.onSurface, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+  orderActions: { flexDirection: "row", gap: 10 },
+  smallCta: { minHeight: 40, borderRadius: 20, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.brand },
+  smallCtaText: { color: colors.onBrand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  ratingRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 },
+  ratingText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 12, fontStyle: "italic" },
+  ratingCard: { padding: 14, borderRadius: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: 8, marginBottom: 6 },
+  ratingCardNote: { color: colors.onSurface, fontSize: 14, fontStyle: "italic", lineHeight: 20 },
+
+  rateOrderCard: { flexDirection: "row", gap: 10, alignItems: "center", padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  starsWrap: { alignItems: "center", padding: 18, borderRadius: 16, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: 10 },
+  starsCount: { color: colors.onSurface, fontSize: 12, fontWeight: "900", letterSpacing: 1.4 },
 
   profileHead: { alignItems: "center", padding: 22, marginTop: 18, borderRadius: 20, backgroundColor: colors.surfaceSecondary },
   profileAvatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center", marginBottom: 10, borderWidth: 1, borderColor: colors.border },

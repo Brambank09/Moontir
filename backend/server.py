@@ -127,6 +127,17 @@ class InvoiceItem(BaseModel):
     amount: int
 
 
+class RatingInput(BaseModel):
+    stars: int = Field(ge=1, le=5)
+    note: str = Field(default="", max_length=500)
+
+
+class RatingOut(BaseModel):
+    stars: int
+    note: str
+    rated_at: str
+
+
 class OrderOut(BaseModel):
     id: str
     service_id: str
@@ -142,6 +153,7 @@ class OrderOut(BaseModel):
     total: int
     payment_status: str
     created_at: str
+    rating: Optional[RatingOut] = None
 
 
 class QuoteInput(BaseModel):
@@ -345,6 +357,35 @@ async def create_order(input: OrderCreate, user: dict = Depends(current_user)):
     }
     await db.orders.insert_one(order)
     return OrderOut(**{k: v for k, v in order.items() if k != "user_id"})
+
+
+@api_router.post("/orders/{order_id}/complete", response_model=OrderOut)
+async def complete_order(order_id: str, user: dict = Depends(current_user)):
+    completed_at = now_iso()
+    entry = {"key": "completed", "label": "Service completed", "label_id": "Layanan selesai", "at": completed_at}
+    result = await db.orders.find_one_and_update(
+        {"id": order_id, "user_id": user["id"]},
+        {"$set": {"status": "completed"}, "$push": {"status_history": entry}},
+        return_document=True,
+        projection={"_id": 0, "user_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    return OrderOut(**result)
+
+
+@api_router.post("/orders/{order_id}/rating", response_model=OrderOut)
+async def rate_order(order_id: str, input: RatingInput, user: dict = Depends(current_user)):
+    rating = {"stars": int(input.stars), "note": input.note.strip(), "rated_at": now_iso()}
+    result = await db.orders.find_one_and_update(
+        {"id": order_id, "user_id": user["id"]},
+        {"$set": {"rating": rating}},
+        return_document=True,
+        projection={"_id": 0, "user_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    return OrderOut(**result)
 
 
 app.include_router(api_router)

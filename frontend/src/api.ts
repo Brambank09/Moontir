@@ -10,7 +10,8 @@ export type Vehicle = { id: string; nickname: string; make: string; model: strin
 export type VehiclePayload = { nickname: string; make: string; model: string; year: string; plate: string; type: string };
 export type Address = { label: string; latitude?: number; longitude?: number };
 export type InvoiceItem = { label: string; label_id?: string | null; amount: number };
-export type Order = { id: string; service_id: string; service_name: string; vehicle: Vehicle; address: Address; schedule_date: string; schedule_time: string; notes: string; status: string; status_history: { key: string; label: string; label_id: string; at: string }[]; items: InvoiceItem[]; total: number; payment_status: string; created_at: string };
+export type Rating = { stars: number; note: string; rated_at: string };
+export type Order = { id: string; service_id: string; service_name: string; vehicle: Vehicle; address: Address; schedule_date: string; schedule_time: string; notes: string; status: string; status_history: { key: string; label: string; label_id: string; at: string }[]; items: InvoiceItem[]; total: number; payment_status: string; created_at: string; rating?: Rating | null };
 export type Quote = { items: InvoiceItem[]; total: number; multiplier: number; vehicle_type: string; base: number; surcharge: number };
 export type Auth = { token: string; user: User };
 export type GeocodeResult = { displayName: string; latitude: number; longitude: number; osmId?: number };
@@ -37,4 +38,6 @@ export const api = {
   reverseGeocode: (latitude: number, longitude: number) => request<{ displayName: string; latitude: number; longitude: number }>(`/api/reverse-geocode?lat=${latitude}&lon=${longitude}`),
   orders: (token: string) => request<Order[]>("/api/orders", {}, token),
   createOrder: (token: string, data: { service_id: string; vehicle_id: string; address: Address; schedule_date: string; schedule_time: string; notes: string }) => request<Order>("/api/orders", { method: "POST", body: JSON.stringify(data) }, token),
+  completeOrder: (token: string, id: string) => request<Order>(`/api/orders/${id}/complete`, { method: "POST" }, token),
+  rateOrder: (token: string, id: string, data: { stars: number; note: string }) => request<Order>(`/api/orders/${id}/rating`, { method: "POST", body: JSON.stringify(data) }, token),
 };

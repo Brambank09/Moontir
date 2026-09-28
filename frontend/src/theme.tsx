@@ -103,7 +103,15 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const scheme: ColorScheme = mode === "system" ? (system === "dark" ? "dark" : "light") : mode;
-  useEffect(() => { if (ready) Appearance.setColorScheme?.(mode === "system" ? null : mode); }, [mode, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    // Android's native AppearanceModule.setColorScheme rejects null (Kotlin non-null param),
+    // so only force a scheme when the user picks Light or Dark. "System" simply leaves the
+    // OS default alone.
+    if (mode === "light" || mode === "dark") {
+      try { Appearance.setColorScheme?.(mode); } catch { /* ignore */ }
+    }
+  }, [mode, ready]);
 
   const value = useMemo<ThemeContextValue>(() => ({
     scheme,
