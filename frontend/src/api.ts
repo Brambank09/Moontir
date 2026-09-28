@@ -3,9 +3,11 @@ import Constants from "expo-constants";
 const API_URL = Constants.expoConfig?.extra?.backendUrl || process.env.EXPO_BACKEND_URL || process.env.EXPO_PUBLIC_BACKEND_URL;
 if (!API_URL) throw new Error("Missing EXPO_BACKEND_URL");
 
+export type ServiceGroup = "light" | "detail" | "special";
 export type User = { id: string; name: string; email: string };
-export type Service = { id: string; name: string; name_id: string; category: string; category_id: string; description: string; description_id: string; duration: string; duration_id: string; price: number; featured: boolean; features: string[] };
+export type Service = { id: string; group: ServiceGroup; name: string; name_id: string; category: string; category_id: string; description: string; description_id: string; duration: string; duration_id: string; price: number; featured: boolean; features: string[] };
 export type Vehicle = { id: string; nickname: string; make: string; model: string; year: string; plate: string; type: string; created_at: string };
+export type VehiclePayload = { nickname: string; make: string; model: string; year: string; plate: string; type: string };
 export type Address = { label: string; latitude?: number; longitude?: number };
 export type InvoiceItem = { label: string; label_id?: string | null; amount: number };
 export type Order = { id: string; service_id: string; service_name: string; vehicle: Vehicle; address: Address; schedule_date: string; schedule_time: string; notes: string; status: string; status_history: { key: string; label: string; label_id: string; at: string }[]; items: InvoiceItem[]; total: number; payment_status: string; created_at: string };
@@ -28,7 +30,9 @@ export const api = {
   services: () => request<Service[]>("/api/services"),
   quote: (data: { service_id: string; vehicle_type: string }) => request<Quote>("/api/quote", { method: "POST", body: JSON.stringify(data) }),
   vehicles: (token: string) => request<Vehicle[]>("/api/vehicles", {}, token),
-  addVehicle: (token: string, data: Omit<Vehicle, "id" | "created_at">) => request<Vehicle>("/api/vehicles", { method: "POST", body: JSON.stringify(data) }, token),
+  addVehicle: (token: string, data: VehiclePayload) => request<Vehicle>("/api/vehicles", { method: "POST", body: JSON.stringify(data) }, token),
+  updateVehicle: (token: string, id: string, data: Partial<VehiclePayload>) => request<Vehicle>(`/api/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(data) }, token),
+  deleteVehicle: (token: string, id: string) => request<{ ok: boolean; id: string }>(`/api/vehicles/${id}`, { method: "DELETE" }, token),
   geocode: (query: string) => request<GeocodeResult[]>(`/api/geocode?q=${encodeURIComponent(query)}`),
   reverseGeocode: (latitude: number, longitude: number) => request<{ displayName: string; latitude: number; longitude: number }>(`/api/reverse-geocode?lat=${latitude}&lon=${longitude}`),
   orders: (token: string) => request<Order[]>("/api/orders", {}, token),

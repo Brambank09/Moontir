@@ -1,25 +1,26 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { api, type Address, type GeocodeResult, type InvoiceItem, type Order, type Quote, type Service, type User, type Vehicle } from "@/src/api";
+import { api, type Address, type GeocodeResult, type InvoiceItem, type Order, type Quote, type Service, type ServiceGroup, type User, type Vehicle, type VehiclePayload } from "@/src/api";
 import { copy, type Lang } from "@/src/i18n";
 import { storage } from "@/src/utils/storage";
-import { makeStyles, useTheme } from "@/src/theme";
+import { makeStyles, useTheme, useThemeMode, type ThemeMode } from "@/src/theme";
 import { LeafletMap } from "@/src/components/LeafletMap";
 import { useToast } from "@/src/components/Toast";
+import { MoontirLogo } from "@/src/components/MoontirLogo";
 
 type Screen = "home" | "services" | "garage" | "orders" | "profile";
 type Step = 1 | 2 | 3 | 4 | 5;
+type GroupFilter = "all" | ServiceGroup;
 const TOKEN_KEY = "moontir_auth_token";
 const LANG_KEY = "moontir_lang";
 const VEHICLE_TYPES = ["Sedan", "Hatchback", "MPV", "SUV", "Pickup", "Truck"] as const;
-const money = (value: number) => `Rp ${value.toLocaleString("id-ID")}`;
+const money = (v: number) => `Rp ${v.toLocaleString("id-ID")}`;
 const slots = ["09:00 – 11:00", "11:30 – 13:30", "14:00 – 16:00", "16:30 – 18:30"];
-const nextDates = Array.from({ length: 5 }, (_, i) => { const date = new Date(); date.setDate(date.getDate() + i + 1); return { value: date.toISOString().slice(0, 10), day: date.toLocaleDateString("en-US", { weekday: "short" }), idDay: date.toLocaleDateString("id-ID", { weekday: "short" }), number: date.getDate() }; });
+const nextDates = Array.from({ length: 5 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() + i + 1); return { value: d.toISOString().slice(0, 10), day: d.toLocaleDateString("en-US", { weekday: "short" }), idDay: d.toLocaleDateString("id-ID", { weekday: "short" }), number: d.getDate() }; });
+const HERO_IMG = "https://images.unsplash.com/photo-1601362840469-51e4d8d58785?w=800&q=70&auto=format";
 
 export default function Index() {
   const { colors } = useTheme(); const styles = useStyles(); const insets = useSafeAreaInsets(); const toast = useToast();
@@ -28,11 +29,17 @@ export default function Index() {
   const [services, setServices] = useState<Service[]>([]); const [vehicles, setVehicles] = useState<Vehicle[]>([]); const [orders, setOrders] = useState<Order[]>([]);
   const [screen, setScreen] = useState<Screen>("home"); const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [auth, setAuth] = useState({ name: "", email: "", password: "" }); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const [booking, setBooking] = useState(false); const [step, setStep] = useState<Step>(1); const [service, setService] = useState<Service | null>(null); const [vehicle, setVehicle] = useState<Vehicle | null>(null);
-  const [address, setAddress] = useState<Address>({ label: "" }); const [query, setQuery] = useState(""); const [results, setResults] = useState<GeocodeResult[]>([]); const [date, setDate] = useState(nextDates[0].value); const [time, setTime] = useState(slots[0]); const [notes, setNotes] = useState("");
-  const [vehicleSheet, setVehicleSheet] = useState(false); const [invoice, setInvoice] = useState<Order | null>(null);
-  const [vehicleForm, setVehicleForm] = useState({ nickname: "", make: "", model: "", year: "", plate: "", type: "Sedan" });
+  const [booking, setBooking] = useState(false); const [step, setStep] = useState<Step>(1);
+  const [service, setService] = useState<Service | null>(null); const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+  const [address, setAddress] = useState<Address>({ label: "" }); const [query, setQuery] = useState(""); const [results, setResults] = useState<GeocodeResult[]>([]);
+  const [date, setDate] = useState(nextDates[0].value); const [time, setTime] = useState(slots[0]); const [notes, setNotes] = useState("");
+  const [vehicleSheet, setVehicleSheet] = useState<{ open: boolean; edit: Vehicle | null }>({ open: false, edit: null });
+  const [vehicleForm, setVehicleForm] = useState<VehiclePayload>({ nickname: "", make: "", model: "", year: "", plate: "", type: "Sedan" });
+  const [confirmDelete, setConfirmDelete] = useState<Vehicle | null>(null);
+  const [invoice, setInvoice] = useState<Order | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
+  const [serviceFilter, setServiceFilter] = useState<GroupFilter>("all");
+  const [serviceSearch, setServiceSearch] = useState("");
 
   const setLang = async (next: Lang) => { setLangState(next); await storage.setItem(LANG_KEY, next); toast.show(copy[next].languageUpdated, "info"); };
 
@@ -49,13 +56,10 @@ export default function Index() {
       } catch {
         if (saved) await storage.secureRemove(TOKEN_KEY);
         setToken(null);
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     })();
   }, []);
 
-  // Refresh quote whenever service+vehicle changes.
   useEffect(() => {
     if (!service || !vehicle) { setQuote(null); return; }
     let cancelled = false;
@@ -77,6 +81,8 @@ export default function Index() {
   };
 
   const openBooking = (selected?: Service) => { setService(selected || null); setVehicle(vehicles[0] || null); setStep(selected ? 2 : 1); setBooking(true); setError(""); };
+  const openAddVehicle = () => { setVehicleForm({ nickname: "", make: "", model: "", year: "", plate: "", type: "Sedan" }); setVehicleSheet({ open: true, edit: null }); setError(""); };
+  const openEditVehicle = (v: Vehicle) => { setVehicleForm({ nickname: v.nickname, make: v.make, model: v.model, year: v.year, plate: v.plate, type: v.type }); setVehicleSheet({ open: true, edit: v }); setError(""); };
 
   const locate = async () => {
     setBusy(true); setError("");
@@ -89,128 +95,129 @@ export default function Index() {
     } catch (e) { setError(e instanceof Error ? e.message : "Location unavailable."); }
     finally { setBusy(false); }
   };
-
-  const search = async () => {
-    if (query.trim().length < 3) return;
-    setBusy(true);
-    try { setResults(await api.geocode(query)); }
-    catch (e) { setError(e instanceof Error ? e.message : "Map search unavailable."); }
-    finally { setBusy(false); }
-  };
-
+  const search = async () => { if (query.trim().length < 3) return; setBusy(true); try { setResults(await api.geocode(query)); } catch (e) { setError(e instanceof Error ? e.message : "Map search unavailable."); } finally { setBusy(false); } };
   const onPickPin = async (coords: { latitude: number; longitude: number }) => {
     setAddress((prev) => ({ ...prev, latitude: coords.latitude, longitude: coords.longitude }));
-    try {
-      const reversed = await api.reverseGeocode(coords.latitude, coords.longitude);
-      setAddress({ label: reversed.displayName, latitude: reversed.latitude, longitude: reversed.longitude });
-    } catch { /* keep coords only */ }
+    try { const reversed = await api.reverseGeocode(coords.latitude, coords.longitude); setAddress({ label: reversed.displayName, latitude: reversed.latitude, longitude: reversed.longitude }); } catch { /* keep coords */ }
   };
 
   const confirmOrder = async () => {
     if (!token || !service || !vehicle || !address.label) return;
     setBusy(true);
-    try {
-      await api.createOrder(token, { service_id: service.id, vehicle_id: vehicle.id, address, schedule_date: date, schedule_time: time, notes });
-      await refresh(token);
-      setBooking(false); setScreen("orders");
-      toast.show(`${t.success} · ${t.successHint}`, "success");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Could not confirm order.";
-      setError(message); toast.show(message, "error");
-    } finally { setBusy(false); }
+    try { await api.createOrder(token, { service_id: service.id, vehicle_id: vehicle.id, address, schedule_date: date, schedule_time: time, notes }); await refresh(token); setBooking(false); setScreen("orders"); toast.show(`${t.success} · ${t.successHint}`, "success"); }
+    catch (e) { const m = e instanceof Error ? e.message : "Could not confirm order."; setError(m); toast.show(m, "error"); }
+    finally { setBusy(false); }
   };
 
   const saveVehicle = async () => {
     if (!token || Object.values(vehicleForm).some((x) => !x.trim())) return setError(t.required);
     setBusy(true);
     try {
-      const created = await api.addVehicle(token, vehicleForm);
-      setVehicles([created, ...vehicles]);
-      setVehicle(created);
-      setVehicleSheet(false);
-      setVehicleForm({ nickname: "", make: "", model: "", year: "", plate: "", type: "Sedan" });
-      toast.show(`${created.nickname} · ${created.plate}`, "success");
+      if (vehicleSheet.edit) {
+        const updated = await api.updateVehicle(token, vehicleSheet.edit.id, vehicleForm);
+        setVehicles((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
+        if (vehicle?.id === updated.id) setVehicle(updated);
+        toast.show(t.vehicleUpdated, "success");
+      } else {
+        const created = await api.addVehicle(token, vehicleForm);
+        setVehicles([created, ...vehicles]);
+        setVehicle(created);
+        toast.show(`${created.nickname} · ${created.plate}`, "success");
+      }
+      setVehicleSheet({ open: false, edit: null });
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save vehicle."); }
     finally { setBusy(false); }
+  };
+
+  const deleteVehicle = async (v: Vehicle) => {
+    if (!token) return;
+    setBusy(true);
+    try {
+      await api.deleteVehicle(token, v.id);
+      setVehicles((prev) => prev.filter((x) => x.id !== v.id));
+      if (vehicle?.id === v.id) setVehicle(null);
+      toast.show(t.vehicleRemoved, "success");
+    } catch (e) { toast.show(e instanceof Error ? e.message : "Delete failed.", "error"); }
+    finally { setBusy(false); setConfirmDelete(null); }
   };
 
   const updateProfile = async (name: string) => {
     if (!token || !name.trim()) return;
     setBusy(true);
-    try {
-      const updated = await api.updateMe(token, { name: name.trim() });
-      setUser(updated);
-      toast.show(t.profileUpdated, "success");
-    } catch (e) { toast.show(e instanceof Error ? e.message : "Update failed.", "error"); }
+    try { const updated = await api.updateMe(token, { name: name.trim() }); setUser(updated); toast.show(t.profileUpdated, "success"); }
+    catch (e) { toast.show(e instanceof Error ? e.message : "Update failed.", "error"); }
     finally { setBusy(false); }
   };
 
   const logout = async () => { await storage.secureRemove(TOKEN_KEY); setToken(null); setUser(null); setScreen("home"); };
 
-  if (loading) return (
-    <View style={styles.loading}>
-      <ActivityIndicator size="large" color={colors.moonGlow} />
-      <Text style={styles.brand}>MOONTIR</Text>
-    </View>
-  );
+  if (loading) return <View style={styles.loading}><MoontirLogo width={180} height={44} /><ActivityIndicator size="small" color={colors.brand} style={{ marginTop: 22 }} /><Text style={styles.brandKicker}>{t.welcome}</Text></View>;
 
   if (!token || !user) return <Auth lang={lang} setLang={setLang} mode={authMode} setMode={setAuthMode} values={auth} setValues={setAuth} error={error} busy={busy} submit={authSubmit} />;
 
-  const body = screen === "home" ? <Home user={user} services={services} orders={orders} t={t} book={() => openBooking()} select={openBooking} goOrders={() => setScreen("orders")} />
-    : screen === "services" ? <Catalog services={services} t={t} book={openBooking} />
-    : screen === "garage" ? <Garage vehicles={vehicles} t={t} add={() => setVehicleSheet(true)} />
+  const body = screen === "home" ? <Home user={user} services={services} orders={orders} vehicles={vehicles} t={t} lang={lang} book={() => openBooking()} select={openBooking} goServices={() => setScreen("services")} goOrders={() => setScreen("orders")} goServicesFiltered={(g: GroupFilter) => { setServiceFilter(g); setScreen("services"); }} />
+    : screen === "services" ? <Catalog services={services} t={t} lang={lang} book={openBooking} filter={serviceFilter} setFilter={setServiceFilter} search={serviceSearch} setSearch={setServiceSearch} />
+    : screen === "garage" ? <Garage vehicles={vehicles} t={t} add={openAddVehicle} edit={openEditVehicle} ask={setConfirmDelete} />
     : screen === "orders" ? <OrderList orders={orders} t={t} invoice={setInvoice} />
-    : <Profile user={user} t={t} lang={lang} setLang={setLang} logout={logout} save={updateProfile} busy={busy} />;
+    : <Profile user={user} t={t} lang={lang} setLang={setLang} logout={logout} save={updateProfile} busy={busy} orders={orders} openOrder={setInvoice} />;
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, overflow: "hidden" }]}>
-      <View style={styles.glow} />
-      <View style={styles.glowSecondary} />
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 112 + insets.bottom }} showsVerticalScrollIndicator={false}>{body}</ScrollView>
-      <View style={[styles.nav, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <BlurView tint="dark" intensity={40} style={styles.navBlur}>
-          {(["home", "services", "garage", "orders", "profile"] as Screen[]).map((item) => (
-            <Nav key={item} screen={item} current={screen} setScreen={setScreen} label={t[item]} />
-          ))}
-        </BlurView>
-      </View>
-      <BookingModal
-        open={booking} close={() => setBooking(false)} step={step} setStep={setStep} t={t}
-        services={services} vehicles={vehicles} service={service} vehicle={vehicle}
-        setService={setService} setVehicle={setVehicle}
-        address={address} setAddress={setAddress}
-        query={query} setQuery={setQuery} results={results} setResults={setResults}
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <TopBar t={t} orders={orders} setScreen={setScreen} lang={lang} setLang={setLang} />
+      <ScrollView contentContainerStyle={{ padding: 22, paddingBottom: 128 + insets.bottom }} showsVerticalScrollIndicator={false}>{body}</ScrollView>
+      <BottomNav screen={screen} setScreen={setScreen} t={t} insets={insets} />
+
+      <BookingModal open={booking} close={() => setBooking(false)} step={step} setStep={setStep} t={t} lang={lang}
+        services={services} vehicles={vehicles} service={service} vehicle={vehicle} setService={setService} setVehicle={setVehicle}
+        address={address} setAddress={setAddress} query={query} setQuery={setQuery} results={results} setResults={setResults}
         date={date} setDate={setDate} time={time} setTime={setTime} notes={notes} setNotes={setNotes}
-        locate={locate} search={search} confirm={confirmOrder} busy={busy} error={error}
-        quote={quote}
-        onPickPin={onPickPin}
-        addVehicle={() => { setBooking(false); setVehicleSheet(true); }}
-      />
-      <VehicleModal open={vehicleSheet} close={() => setVehicleSheet(false)} form={vehicleForm} setForm={setVehicleForm} save={saveVehicle} t={t} busy={busy} error={error} />
+        locate={locate} search={search} confirm={confirmOrder} busy={busy} error={error} quote={quote} onPickPin={onPickPin}
+        addVehicle={() => { setBooking(false); openAddVehicle(); }} />
+
+      <VehicleModal state={vehicleSheet} close={() => setVehicleSheet({ open: false, edit: null })} form={vehicleForm} setForm={setVehicleForm} save={saveVehicle} t={t} busy={busy} error={error} />
+      <ConfirmModal vehicle={confirmDelete} close={() => setConfirmDelete(null)} confirm={deleteVehicle} t={t} busy={busy} />
       <InvoiceModal order={invoice} close={() => setInvoice(null)} t={t} lang={lang} />
     </View>
   );
 }
 
+/* ---------------- TOP BAR ---------------- */
+
+function TopBar({ t, orders, lang, setLang }: any) {
+  const styles = useStyles(); const { colors } = useTheme();
+  const active = orders.filter((o: Order) => o.status !== "completed").length;
+  return (
+    <View style={styles.topBar}>
+      <Pressable testID="lang-toggle" style={styles.topBtn} onPress={() => setLang(lang === "en" ? "id" : "en")}>
+        <Ionicons name="language-outline" size={19} color={colors.onSurface} />
+      </Pressable>
+      <MoontirLogo width={150} height={34} />
+      <View style={styles.topBtn}>
+        <Ionicons name="bag-handle-outline" size={19} color={colors.onSurface} />
+        {active > 0 && <View testID="active-badge" style={styles.badge}><Text style={styles.badgeText}>{active}</Text></View>}
+      </View>
+    </View>
+  );
+}
+
+/* ---------------- AUTH ---------------- */
+
 function Auth({ lang, setLang, mode, setMode, values, setValues, error, busy, submit }: any) {
   const { colors } = useTheme(); const styles = useStyles(); const t = copy[lang];
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.auth}>
-      <LinearGradient colors={[colors.surface, colors.surfaceSecondary, colors.surface]} style={StyleSheet.absoluteFill} />
-      <Pressable testID="language-toggle" style={styles.lang} onPress={() => setLang(lang === "en" ? "id" : "en")}>
-        <Ionicons name="language-outline" size={18} color={colors.moonGlow} />
-        <Text style={styles.langText}>{t.language}</Text>
+      <Pressable testID="language-toggle" style={styles.langChip} onPress={() => setLang(lang === "en" ? "id" : "en")}>
+        <Ionicons name="language-outline" size={16} color={colors.onSurface} />
+        <Text style={styles.langChipText}>{t.language}</Text>
       </Pressable>
-      <ScrollView contentContainerStyle={styles.authContent}>
-        <View style={styles.brandRow}>
-          <Ionicons name="moon" size={30} color={colors.moonGlow} />
-          <Text style={styles.brand}>MOONTIR</Text>
-          <View style={styles.brandGearBadge}>
-            <Ionicons name="cog-outline" size={14} color={colors.moonGlow} />
-          </View>
+      <ScrollView contentContainerStyle={styles.authContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.authBrand}>
+          <MoontirLogo width={220} height={54} />
+          <View style={styles.divider} />
+          <Text style={styles.tagline}>{t.tagline.toUpperCase()}</Text>
         </View>
         <Text style={styles.authTitle}>{t.welcome}</Text>
-        <Text style={styles.muted}>{lang === "en" ? "Home vehicle care, in a softer light." : "Perawatan kendaraan di rumah, dalam cahaya yang lebih tenang."}</Text>
+        <Text style={styles.muted}>{mode === "login" ? (lang === "id" ? "Masuk untuk melanjutkan perawatan mobilmu." : "Sign in to continue your car's care.") : (lang === "id" ? "Buat akun untuk mengatur perawatan pertamamu." : "Create an account to schedule your first care session.")}</Text>
         <View style={styles.authCard}>
           {mode === "register" && <Field testID="auth-name" label={t.name} value={values.name} onChangeText={(name: string) => setValues({ ...values, name })} icon="person-outline" />}
           <Field testID="auth-email" label={t.email} value={values.email} onChangeText={(email: string) => setValues({ ...values, email })} icon="mail-outline" keyboardType="email-address" />
@@ -227,142 +234,312 @@ function Auth({ lang, setLang, mode, setMode, values, setValues, error, busy, su
   );
 }
 
-function Home({ user, services, orders, t, book, select, goOrders }: any) {
+/* ---------------- HOME ---------------- */
+
+function Home({ user, services, orders, t, lang, book, select, goServicesFiltered, goOrders }: any) {
   const { colors } = useTheme(); const styles = useStyles();
   const active = orders.find((x: Order) => x.status !== "completed");
+  const recent = orders.slice(0, 2);
   return (
     <>
-      <Header user={user} t={t} />
-      <LinearGradient colors={[colors.brandSecondary, colors.brandPrimary]} style={styles.hero}>
-        <Ionicons name="moon" size={38} color={colors.moonGlow} style={styles.heroMoon} />
-        <View style={styles.heroGear}><Ionicons name="cog-outline" size={22} color={colors.moonGlow} /></View>
-        <Text style={styles.kicker}>AT-HOME VEHICLE CARE</Text>
-        <Text style={styles.heroTitle}>{t.book}</Text>
-        <Text style={styles.heroBody}>{t.welcome}</Text>
-        <Button testID="home-book" label={t.book} onPress={book} />
-      </LinearGradient>
-      {active ? (
-        <Pressable testID="home-active-order" style={styles.card} onPress={goOrders}>
-          <Ionicons name="navigate-outline" size={23} color={colors.success} />
-          <View style={styles.flex}>
-            <Text style={styles.label}>{t.active}</Text>
-            <Text style={styles.cardTitle}>{active.service_name}</Text>
+      <Text style={styles.hi}>{t.hello}, {user.name.split(" ")[0]}.</Text>
+      <Text style={styles.hiSub}>{t.subtitle}</Text>
+
+      <View style={styles.hero}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.heroKicker}>{t.heroKicker}</Text>
+          <Text style={styles.heroBig}>{t.heroTitle}</Text>
+          <Text style={styles.heroLine}>{t.heroSub}</Text>
+          <Pressable testID="home-book" style={styles.heroBtn} onPress={book}>
+            <Text style={styles.heroBtnText}>{t.shopNow}</Text>
+          </Pressable>
+        </View>
+        <Image source={{ uri: HERO_IMG }} style={styles.heroImg} resizeMode="cover" />
+      </View>
+
+      {active && (
+        <Pressable testID="home-active-order" style={styles.activeCard} onPress={goOrders}>
+          <View style={styles.activeDot} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.activeKicker}>{t.active.toUpperCase()}</Text>
+            <Text style={styles.activeTitle}>{active.service_name}</Text>
             <Text style={styles.muted}>{active.schedule_date} · {active.schedule_time}</Text>
           </View>
-          <Ionicons name="chevron-forward" size={19} color={colors.muted} />
+          <Ionicons name="chevron-forward" size={18} color={colors.onSurface} />
         </Pressable>
-      ) : (
-        <View style={styles.card}>
-          <Ionicons name="sparkles-outline" size={23} color={colors.moonGlow} />
-          <View style={styles.flex}>
-            <Text style={styles.cardTitle}>{t.noActive}</Text>
-            <Text style={styles.muted}>{t.noActiveHint}</Text>
-          </View>
-        </View>
       )}
-      <Section title={t.popular} action={t.seeAll} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        {services.filter((x: Service) => x.featured).map((x: Service) => (
-          <ServiceCard key={x.id} service={x} lang={t === copy.id ? "id" : "en"} press={() => select(x)} compact />
-        ))}
-      </ScrollView>
-      <Section title={t.services} action={t.seeAll} />
-      <View style={styles.categories}>
-        <Category icon="water-outline" label="Detailing" />
-        <Category icon="construct-outline" label={t === copy.id ? "Perawatan" : "Maintenance"} />
-        <Category icon="shield-checkmark-outline" label="Premium" />
+
+      <View style={styles.sectionRow}>
+        <Text style={styles.sectionKicker}>{t.exploreCollection}</Text>
+        <Pressable onPress={() => goServicesFiltered("all")}><Text style={styles.viewAll}>{t.viewAll}</Text></Pressable>
       </View>
+      <View style={styles.circleRow}>
+        <CategoryCircle icon="water-outline" label={t.groupLight} onPress={() => goServicesFiltered("light")} />
+        <CategoryCircle icon="sparkles-outline" label={t.groupDetail} onPress={() => goServicesFiltered("detail")} />
+        <CategoryCircle icon="moon-outline" label={t.groupSpecial} onPress={() => goServicesFiltered("special")} />
+      </View>
+
+      <Pressable style={styles.tile} onPress={() => goServicesFiltered("special")}>
+        <Ionicons name="moon-outline" size={30} color={colors.onSurface} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.tileTitle}>{t.quickCare}</Text>
+          <Text style={styles.tileTitle}>{t.quickCareLine}</Text>
+          <Text style={styles.tileKicker}>{t.discoverMore}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.onSurface} />
+      </Pressable>
+
+      <View style={styles.sectionRow}>
+        <Text style={styles.sectionKicker}>{t.popular}</Text>
+      </View>
+      <View style={{ gap: 12 }}>
+        {services.filter((x: Service) => x.featured).slice(0, 3).map((x: Service) => (
+          <ServiceRow key={x.id} service={x} lang={lang} testID={`home-service-${x.id}`} press={() => select(x)} />
+        ))}
+      </View>
+
+      {recent.length > 0 && (
+        <>
+          <View style={styles.sectionRow}>
+            <Text style={styles.sectionKicker}>{t.recentOrders.toUpperCase()}</Text>
+            <Pressable onPress={goOrders}><Text style={styles.viewAll}>{t.viewAll}</Text></Pressable>
+          </View>
+          <View style={{ gap: 12 }}>
+            {recent.map((o: Order) => <OrderRow key={o.id} order={o} t={t} onPress={goOrders} />)}
+          </View>
+        </>
+      )}
     </>
   );
 }
 
-function Catalog({ services, t, book }: any) {
+function CategoryCircle({ icon, label, onPress }: any) {
+  const { colors } = useTheme(); const styles = useStyles();
+  return (
+    <Pressable style={styles.circleWrap} onPress={onPress} testID={`cat-${label}`}>
+      <View style={styles.circle}><Ionicons name={icon} size={28} color={colors.onSurface} /></View>
+      <Text style={styles.circleLabel} numberOfLines={2}>{label.toUpperCase()}</Text>
+    </Pressable>
+  );
+}
+
+/* ---------------- SERVICES / CATALOG ---------------- */
+
+function Catalog({ services, t, lang, book, filter, setFilter, search, setSearch }: any) {
+  const { colors } = useTheme(); const styles = useStyles();
+  const groups: { key: GroupFilter; label: string }[] = [
+    { key: "all", label: lang === "id" ? "SEMUA" : "ALL" },
+    { key: "light", label: t.groupLight.toUpperCase() },
+    { key: "detail", label: t.groupDetail.toUpperCase() },
+    { key: "special", label: t.groupSpecial.toUpperCase() },
+  ];
+  const q = search.trim().toLowerCase();
+  // When the user types a search, ignore the group filter so results surface
+  // across all groups (matches the "search across groups" spec).
+  const activeFilter: GroupFilter = q ? "all" : filter;
+  const filtered = services.filter((s: Service) => {
+    if (activeFilter !== "all" && s.group !== activeFilter) return false;
+    if (!q) return true;
+    const hay = `${s.name} ${s.name_id} ${s.description} ${s.description_id} ${s.category} ${s.category_id}`.toLowerCase();
+    return hay.includes(q);
+  });
+  const grouped: Record<ServiceGroup, Service[]> = { light: [], detail: [], special: [] };
+  filtered.forEach((s: Service) => grouped[s.group].push(s));
+
   return (
     <>
-      <Title eyebrow="MOONTIR CATALOG" title={t.services} subtitle={t === copy.id ? "Pilih perawatan yang sesuai kendaraanmu." : "Find the right care package for your vehicle."} />
-      <View style={{ gap: 13 }}>
-        {services.map((x: Service) => (
-          <ServiceCard key={x.id} testID={`service-${x.id}`} service={x} lang={t === copy.id ? "id" : "en"} press={() => book(x)} />
-        ))}
+      <Text style={styles.pageTitle}>{t.services.charAt(0) + t.services.slice(1).toLowerCase()}</Text>
+      <Text style={styles.muted}>{lang === "id" ? "Pilih perawatan yang sesuai kendaraanmu." : "Find the right care package for your car."}</Text>
+
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" size={18} color={colors.muted} />
+        <TextInput testID="service-search" value={search} onChangeText={setSearch} placeholder={t.searchServices} placeholderTextColor={colors.muted} style={styles.searchInput} />
+        {search.length > 0 && (
+          <Pressable onPress={() => setSearch("")} hitSlop={8}><Ionicons name="close-circle" size={18} color={colors.muted} /></Pressable>
+        )}
       </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+        {groups.map((g) => (
+          <Pressable key={g.key} testID={`filter-${g.key}`} style={[styles.chip, filter === g.key && styles.chipActive]} onPress={() => setFilter(g.key)}>
+            <Text style={[styles.chipText, filter === g.key && styles.chipTextActive]}>{g.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      {filtered.length === 0 ? (
+        <View style={styles.empty}>
+          <Ionicons name="search-outline" size={30} color={colors.muted} />
+          <Text style={styles.cardTitle}>{lang === "id" ? "Tidak ada layanan cocok" : "No matching services"}</Text>
+          <Text style={styles.muted}>{lang === "id" ? "Coba kata kunci atau kategori lain." : "Try another keyword or category."}</Text>
+        </View>
+      ) : (
+        <View style={{ gap: 22 }}>
+          {(Object.keys(grouped) as ServiceGroup[]).map((g) => (
+            grouped[g].length > 0 && (activeFilter === "all" || activeFilter === g) ? (
+              <View key={g} style={{ gap: 12 }}>
+                <Text style={styles.groupTitle}>{(g === "light" ? t.groupLight : g === "detail" ? t.groupDetail : t.groupSpecial).toUpperCase()}</Text>
+                {grouped[g].map((s) => <ServiceRow key={s.id} service={s} lang={lang} testID={`service-${s.id}`} press={() => book(s)} />)}
+              </View>
+            ) : null
+          ))}
+        </View>
+      )}
     </>
   );
 }
 
-function Garage({ vehicles, t, add }: any) {
+function ServiceRow({ service, lang, press, selected, testID }: any) {
+  const { colors } = useTheme(); const styles = useStyles();
+  return (
+    <Pressable testID={testID} style={[styles.rowCard, selected && styles.rowCardSelected]} onPress={press}>
+      <View style={styles.rowIcon}><Ionicons name={service.group === "light" ? "water-outline" : service.group === "detail" ? "sparkles-outline" : "moon-outline"} size={22} color={colors.onSurface} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle}>{lang === "id" ? service.name_id : service.name}</Text>
+        <Text style={styles.rowSub} numberOfLines={2}>{lang === "id" ? service.description_id : service.description}</Text>
+        <Text style={styles.rowMeta}>{lang === "id" ? service.duration_id : service.duration} · {money(service.price)}</Text>
+      </View>
+      <View style={styles.plusBtn}><Ionicons name={selected ? "checkmark" : "add"} size={18} color={colors.onBrand} /></View>
+    </Pressable>
+  );
+}
+
+/* ---------------- GARAGE ---------------- */
+
+function Garage({ vehicles, t, add, edit, ask }: any) {
   const { colors } = useTheme(); const styles = useStyles();
   return (
     <>
-      <Title eyebrow="MY GARAGE" title={t.garage} subtitle={t === copy.id ? "Simpan kendaraan untuk checkout lebih cepat." : "Save vehicles for a faster checkout."} />
-      <Pressable testID="vehicle-add" style={styles.outline} onPress={add}>
-        <Ionicons name="add" size={20} color={colors.moonGlow} />
-        <Text style={styles.outlineText}>{t.addVehicle}</Text>
+      <Text style={styles.pageTitle}>{t.garage.charAt(0) + t.garage.slice(1).toLowerCase()}</Text>
+      <Text style={styles.muted}>{t.myVehicles}</Text>
+
+      <Pressable testID="vehicle-add" style={styles.outlineCta} onPress={add}>
+        <Ionicons name="add" size={20} color={colors.onSurface} />
+        <Text style={styles.outlineCtaText}>{t.addVehicle}</Text>
       </Pressable>
+
       {vehicles.length ? (
-        <View style={{ gap: 13, marginTop: 16 }}>
-          {vehicles.map((x: Vehicle) => <VehicleCard key={x.id} vehicle={x} testID={`garage-vehicle-${x.id}`} />)}
+        <View style={{ gap: 12, marginTop: 18 }}>
+          {vehicles.map((v: Vehicle) => (
+            <View key={v.id} testID={`garage-vehicle-${v.id}`} style={styles.vehicleCard}>
+              <View style={styles.rowIcon}><Ionicons name="car-sport-outline" size={22} color={colors.onSurface} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>{v.nickname}</Text>
+                <Text style={styles.rowSub}>{v.make} {v.model} · {v.year} · {v.type}</Text>
+                <Text style={styles.plate}>{v.plate}</Text>
+              </View>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                <Pressable testID={`vehicle-edit-${v.id}`} onPress={() => edit(v)} style={styles.iconAction}>
+                  <Ionicons name="create-outline" size={17} color={colors.onSurface} />
+                </Pressable>
+                <Pressable testID={`vehicle-delete-${v.id}`} onPress={() => ask(v)} style={styles.iconAction}>
+                  <Ionicons name="trash-outline" size={17} color={colors.error} />
+                </Pressable>
+              </View>
+            </View>
+          ))}
         </View>
       ) : (
-        <Empty icon="car-outline" title={t === copy.id ? "Garasi masih kosong" : "Your garage is empty"} hint={t === copy.id ? "Tambahkan mobil pertamamu." : "Add your first car to get started."} />
+        <View style={styles.empty}>
+          <Ionicons name="car-outline" size={34} color={colors.muted} />
+          <Text style={styles.cardTitle}>{copy.en === t ? "Your garage is empty" : "Garasi masih kosong"}</Text>
+          <Text style={styles.muted}>{copy.en === t ? "Add your first car to get started." : "Tambahkan mobil pertamamu."}</Text>
+        </View>
       )}
     </>
   );
 }
 
+/* ---------------- ORDERS ---------------- */
+
 function OrderList({ orders, t, invoice }: any) {
+  const styles = useStyles(); const { colors } = useTheme();
   return (
     <>
-      <Title eyebrow="SERVICE LOG" title={t.orders} subtitle={t === copy.id ? "Semua dispatch dan invoice kamu." : "Every dispatch and invoice in one place."} />
+      <Text style={styles.pageTitle}>{t.orders.charAt(0) + t.orders.slice(1).toLowerCase()}</Text>
+      <Text style={styles.muted}>{copy.en === t ? "Every dispatch and invoice in one place." : "Semua dispatch dan invoice kamu."}</Text>
       {orders.length ? (
-        <View style={{ gap: 13 }}>
-          {orders.map((x: Order) => <OrderCard key={x.id} order={x} t={t} invoice={() => invoice(x)} />)}
+        <View style={{ gap: 12, marginTop: 14 }}>
+          {orders.map((o: Order) => <OrderRow key={o.id} order={o} t={t} onPress={() => invoice(o)} />)}
         </View>
       ) : (
-        <Empty icon="receipt-outline" title={t.emptyHistory} hint={t.emptyHistoryHint} />
+        <View style={styles.empty}>
+          <Ionicons name="receipt-outline" size={34} color={colors.muted} />
+          <Text style={styles.cardTitle}>{t.emptyHistory}</Text>
+          <Text style={styles.muted}>{t.emptyHistoryHint}</Text>
+        </View>
       )}
     </>
   );
 }
+
+function OrderRow({ order, t, onPress }: any) {
+  const styles = useStyles(); const { colors } = useTheme();
+  return (
+    <Pressable testID={`order-${order.id}`} style={styles.orderRow} onPress={onPress}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle}>{order.service_name}</Text>
+        <Text style={styles.rowSub}>{order.vehicle.make} {order.vehicle.model} · {order.schedule_date} · {order.schedule_time}</Text>
+        <Text style={styles.total}>{money(order.total)}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.onSurface} />
+    </Pressable>
+  );
+}
+
+/* ---------------- PROFILE ---------------- */
 
 function Profile({ user, t, lang, setLang, logout, save, busy }: any) {
   const { colors } = useTheme(); const styles = useStyles();
+  const { mode, cycleMode } = useThemeMode();
+  const toast = useToast();
   const [name, setName] = useState<string>(user.name);
   useEffect(() => { setName(user.name); }, [user.name]);
   const dirty = name.trim() !== user.name;
+  const modeLabel = (m: ThemeMode) => m === "system" ? t.themeSystem : m === "light" ? t.themeLight : t.themeDark;
+
   return (
     <>
-      <Title eyebrow="ACCOUNT / ORBIT" title={t.profile} subtitle={t === copy.id ? "Kelola akun dan bahasa Moontir." : "Manage your account and Moontir language."} />
-      <View style={styles.profile}>
-        <View style={styles.profileAvatar}>
-          <Ionicons name="moon" size={20} color={colors.moonGlow} style={styles.profileMoon} />
-          <Text style={styles.profileInitial}>{(user.name?.[0] || "M").toUpperCase()}</Text>
-        </View>
+      <Text style={styles.pageTitle}>{t.profile.charAt(0) + t.profile.slice(1).toLowerCase()}</Text>
+      <Text style={styles.muted}>{lang === "id" ? "Kelola akun dan preferensi Moontir." : "Manage your account and Moontir preferences."}</Text>
+
+      <View style={styles.profileHead}>
+        <View style={styles.profileAvatar}><Text style={styles.profileInitial}>{(user.name?.[0] || "M").toUpperCase()}</Text></View>
         <Text style={styles.profileName}>{user.name}</Text>
         <Text style={styles.muted}>{user.email}</Text>
       </View>
+
       <View style={{ marginTop: 20, gap: 12 }}>
-        <Text style={styles.fieldLabel}>{t.editName}</Text>
+        <Text style={styles.fieldLabel}>{t.editName.toUpperCase()}</Text>
         <Field testID="profile-name" label={t.name} value={name} onChangeText={setName} icon="person-outline" />
         <Button testID="profile-save" label={t.saveProfile} onPress={() => save(name)} busy={busy} disabled={!dirty} />
       </View>
-      <View style={styles.settings}>
-        <Pressable testID="profile-language" style={styles.setting} onPress={() => setLang(lang === "en" ? "id" : "en")}>
-          <Ionicons name="language-outline" size={20} color={colors.moonGlow} />
-          <Text style={[styles.flex, styles.settingLabel]}>{t.languageSetting}</Text>
+
+      <View style={styles.settingsBlock}>
+        <Pressable testID="profile-theme" style={styles.settingRow} onPress={() => { const next = cycleMode(); toast.show(`${t.themeUpdated} · ${modeLabel(next)}`, "info"); }}>
+          <Ionicons name={mode === "dark" ? "moon-outline" : mode === "light" ? "sunny-outline" : "contrast-outline"} size={20} color={colors.onSurface} />
+          <Text style={[styles.settingLabel, { flex: 1 }]}>{t.themeSetting}</Text>
+          <Text style={styles.settingValue}>{modeLabel(mode)}</Text>
+          <Ionicons name="swap-horizontal" size={17} color={colors.muted} />
+        </Pressable>
+        <Pressable testID="profile-language" style={styles.settingRow} onPress={() => setLang(lang === "en" ? "id" : "en")}>
+          <Ionicons name="language-outline" size={20} color={colors.onSurface} />
+          <Text style={[styles.settingLabel, { flex: 1 }]}>{t.languageSetting}</Text>
           <Text style={styles.settingValue}>{lang === "en" ? "English" : "Bahasa Indonesia"}</Text>
           <Ionicons name="swap-horizontal" size={17} color={colors.muted} />
         </Pressable>
-        <View style={styles.setting}>
-          <Ionicons name="wallet-outline" size={20} color={colors.moonGlow} />
-          <Text style={[styles.flex, styles.settingLabel]}>{t.payment}</Text>
+        <View style={styles.settingRow}>
+          <Ionicons name="wallet-outline" size={20} color={colors.onSurface} />
+          <Text style={[styles.settingLabel, { flex: 1 }]}>{t.payment}</Text>
           <Text style={styles.settingValue}>{t.unpaid}</Text>
         </View>
-        <View style={[styles.setting, { borderBottomWidth: 0 }]}>
-          <Ionicons name="help-circle-outline" size={20} color={colors.moonGlow} />
-          <Text style={[styles.flex, styles.settingLabel]}>{t.support}</Text>
+        <View style={[styles.settingRow, { borderBottomWidth: 0 }]}>
+          <Ionicons name="help-circle-outline" size={20} color={colors.onSurface} />
+          <Text style={[styles.settingLabel, { flex: 1 }]}>{t.support}</Text>
           <Text style={styles.settingValue}>{t.supportValue}</Text>
         </View>
       </View>
+
       <Pressable testID="profile-logout" style={styles.logout} onPress={logout}>
         <Ionicons name="log-out-outline" size={20} color={colors.error} />
         <Text style={styles.logoutText}>{t.logout}</Text>
@@ -371,123 +548,140 @@ function Profile({ user, t, lang, setLang, logout, save, busy }: any) {
   );
 }
 
-function BookingModal({ open, close, step, setStep, t, services, vehicles, service, vehicle, setService, setVehicle, address, setAddress, query, setQuery, results, setResults, date, setDate, time, setTime, notes, setNotes, locate, search, confirm, busy, error, addVehicle, quote, onPickPin }: any) {
+/* ---------------- BOTTOM NAV ---------------- */
+
+function BottomNav({ screen, setScreen, t, insets }: any) {
+  const styles = useStyles();
+  return (
+    <View style={[styles.nav, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={styles.navInner}>
+        {(["home", "services", "garage", "orders", "profile"] as Screen[]).map((s) => (
+          <NavItem key={s} screen={s} current={screen} setScreen={setScreen} label={t[s]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function NavItem({ screen, current, setScreen, label }: any) {
+  const { colors } = useTheme(); const styles = useStyles();
+  const active = screen === current;
+  const icons: any = { home: "home-outline", services: "bag-handle-outline", garage: "car-outline", orders: "receipt-outline", profile: "person-outline" };
+  return (
+    <Pressable testID={`tab-${screen}`} style={styles.navItem} onPress={() => setScreen(screen)}>
+      <Ionicons name={icons[screen]} size={22} color={active ? colors.onSurface : colors.muted} />
+      <Text style={[styles.navText, active && { color: colors.onSurface, fontWeight: "800" }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/* ---------------- BOOKING MODAL ---------------- */
+
+function BookingModal({ open, close, step, setStep, t, lang, services, vehicles, service, vehicle, setService, setVehicle, address, setAddress, query, setQuery, results, setResults, date, setDate, time, setTime, notes, setNotes, locate, search, confirm, busy, error, addVehicle, quote, onPickPin }: any) {
   const { colors } = useTheme(); const styles = useStyles(); const insets = useSafeAreaInsets();
   const ready = (step === 1 && service) || (step === 2 && vehicle) || (step === 3 && address.label) || step >= 4;
   return (
     <Modal visible={open} animationType="slide" onRequestClose={close}>
       <View style={[styles.modal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={styles.modalHeader}>
-          <Pressable testID="booking-close" style={styles.iconButton} onPress={close}>
-            <Ionicons name="close" size={24} color={colors.onSurface} />
-          </Pressable>
-          <View style={styles.rail}>
-            {[1, 2, 3, 4, 5].map((i) => <View key={i} style={[styles.railLine, i <= step && styles.railActive]} />)}
-          </View>
-          <Text style={styles.muted}>{step}/5</Text>
+          <Pressable testID="booking-close" style={styles.iconButton} onPress={close}><Ionicons name="chevron-back" size={22} color={colors.onSurface} /></Pressable>
+          <MoontirLogo width={110} height={26} />
+          <View style={{ width: 44 }} />
+        </View>
+        <View style={styles.railWrap}>
+          {[1, 2, 3, 4, 5].map((i) => <View key={i} style={[styles.railDot, i <= step && styles.railDotActive]} />)}
         </View>
         <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-          <Title
-            eyebrow={`BOOKING / 0${step}`}
-            title={[t.selectService, t.selectVehicle, t.address, t.schedule, t.review][step - 1]}
-            subtitle={step === 3 ? t.dragPinHint : (t === copy.id ? "Jaga mobilmu tetap di orbit terbaik." : "Keep your vehicle in its best orbit.")}
-          />
+          <Text style={styles.modalKicker}>{`BOOKING · 0${step}/5`}</Text>
+          <Text style={styles.modalTitle}>{[t.selectService, t.selectVehicle, t.address, t.schedule, t.review][step - 1]}</Text>
+          <Text style={styles.muted}>{step === 3 ? t.dragPinHint : (lang === "id" ? "Rawat mobilmu dengan tenang." : "Care for your car, mindfully.")}</Text>
+
           {step === 1 && (
-            <View style={{ gap: 13 }}>
-              {services.map((x: Service) => (
-                <ServiceCard key={x.id} testID={`booking-service-${x.id}`} service={x} lang={t === copy.id ? "id" : "en"} selected={service?.id === x.id} press={() => setService(x)} />
-              ))}
+            <View style={{ gap: 12, marginTop: 20 }}>
+              {services.map((x: Service) => <ServiceRow key={x.id} testID={`booking-service-${x.id}`} service={x} lang={lang} selected={service?.id === x.id} press={() => setService(x)} />)}
             </View>
           )}
           {step === 2 && (
-            <View style={{ gap: 13 }}>
+            <View style={{ gap: 12, marginTop: 20 }}>
               {vehicles.map((x: Vehicle) => (
-                <VehicleCard key={x.id} testID={`booking-vehicle-${x.id}`} vehicle={x} selected={vehicle?.id === x.id} press={() => setVehicle(x)} />
+                <Pressable key={x.id} testID={`booking-vehicle-${x.id}`} style={[styles.rowCard, vehicle?.id === x.id && styles.rowCardSelected]} onPress={() => setVehicle(x)}>
+                  <View style={styles.rowIcon}><Ionicons name="car-sport-outline" size={22} color={colors.onSurface} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowTitle}>{x.nickname}</Text>
+                    <Text style={styles.rowSub}>{x.make} {x.model} · {x.year} · {x.type}</Text>
+                    <Text style={styles.plate}>{x.plate}</Text>
+                  </View>
+                  <Ionicons name={vehicle?.id === x.id ? "radio-button-on" : "radio-button-off"} size={20} color={vehicle?.id === x.id ? colors.brand : colors.muted} />
+                </Pressable>
               ))}
-              <Pressable testID="booking-add-vehicle" style={styles.outline} onPress={addVehicle}>
-                <Ionicons name="add" size={20} color={colors.moonGlow} />
-                <Text style={styles.outlineText}>{t.addVehicle}</Text>
+              <Pressable testID="booking-add-vehicle" style={styles.outlineCta} onPress={addVehicle}>
+                <Ionicons name="add" size={20} color={colors.onSurface} />
+                <Text style={styles.outlineCtaText}>{t.addVehicle}</Text>
               </Pressable>
             </View>
           )}
-          {step === 3 && <AddressStep t={t} address={address} setAddress={setAddress} query={query} setQuery={setQuery} results={results} setResults={setResults} locate={locate} search={search} busy={busy} onPickPin={onPickPin} />}
-          {step === 4 && <ScheduleStep t={t} date={date} setDate={setDate} time={time} setTime={setTime} notes={notes} setNotes={setNotes} />}
-          {step === 5 && <Review service={service} vehicle={vehicle} address={address} date={date} time={time} t={t} quote={quote} />}
+          {step === 3 && <AddressStep t={t} lang={lang} address={address} setAddress={setAddress} query={query} setQuery={setQuery} results={results} setResults={setResults} locate={locate} search={search} busy={busy} onPickPin={onPickPin} />}
+          {step === 4 && <ScheduleStep t={t} lang={lang} date={date} setDate={setDate} time={time} setTime={setTime} notes={notes} setNotes={setNotes} />}
+          {step === 5 && <Review service={service} vehicle={vehicle} address={address} date={date} time={time} t={t} lang={lang} quote={quote} />}
           {error ? <Text testID="booking-error" style={styles.error}>{error}</Text> : null}
         </ScrollView>
         <View style={styles.footer}>
-          {step > 1 ? (
-            <Pressable testID="booking-back" style={styles.back} onPress={() => setStep((step - 1) as Step)}>
-              <Text style={styles.backText}>{t.back}</Text>
-            </Pressable>
-          ) : <View />}
-          {step < 5 ? (
-            <Button testID="booking-next" label={t.next} onPress={() => ready && setStep((step + 1) as Step)} disabled={!ready} />
-          ) : (
-            <Button testID="confirm-order" label={t.confirm} onPress={confirm} busy={busy} />
-          )}
+          {step > 1 ? <Pressable testID="booking-back" style={styles.back} onPress={() => setStep((step - 1) as Step)}><Text style={styles.backText}>{t.back}</Text></Pressable> : <View />}
+          {step < 5 ? <Button testID="booking-next" label={t.next} onPress={() => ready && setStep((step + 1) as Step)} disabled={!ready} /> : <Button testID="confirm-order" label={t.confirm} onPress={confirm} busy={busy} />}
         </View>
       </View>
     </Modal>
   );
 }
 
-function AddressStep({ t, address, setAddress, query, setQuery, results, setResults, locate, search, busy, onPickPin }: any) {
+function AddressStep({ t, lang, address, setAddress, query, setQuery, results, setResults, locate, search, busy, onPickPin }: any) {
   const { colors } = useTheme(); const styles = useStyles();
   return (
-    <View style={{ gap: 13 }}>
+    <View style={{ gap: 12, marginTop: 20 }}>
       <TextInput testID="address-input" value={address.label} onChangeText={(label) => setAddress({ ...address, label })} multiline placeholder="Jl. Sudirman 21, Semarang" placeholderTextColor={colors.muted} style={[styles.input, styles.multiline]} />
-      <View style={styles.actions}>
-        <Pressable testID="location-button" style={styles.location} onPress={locate}>
-          <Ionicons name="locate-outline" size={18} color={colors.moonGlow} />
-          <Text style={styles.small}>{t.useLocation}</Text>
-        </Pressable>
-        <Pressable testID="address-search" style={styles.location} onPress={search}>
-          <Ionicons name="search-outline" size={18} color={colors.moonGlow} />
-          <Text style={styles.small}>{t.searchAddress}</Text>
-        </Pressable>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <Pressable testID="location-button" style={styles.altBtn} onPress={locate}><Ionicons name="locate-outline" size={16} color={colors.onSurface} /><Text style={styles.altBtnText}>{t.useLocation}</Text></Pressable>
+        <Pressable testID="address-search" style={styles.altBtn} onPress={search}><Ionicons name="search-outline" size={16} color={colors.onSurface} /><Text style={styles.altBtnText}>{t.searchAddress}</Text></Pressable>
       </View>
-      <TextInput testID="address-query" value={query} onChangeText={setQuery} placeholder={t === copy.id ? "Cari jalan atau kota" : "Search a street or city"} placeholderTextColor={colors.muted} style={styles.input} />
-      {busy && <ActivityIndicator color={colors.moonGlow} />}
+      <TextInput testID="address-query" value={query} onChangeText={setQuery} placeholder={lang === "id" ? "Cari jalan atau kota" : "Search a street or city"} placeholderTextColor={colors.muted} style={styles.input} />
+      {busy && <ActivityIndicator color={colors.brand} />}
       {results.map((x: GeocodeResult) => (
-        <Pressable key={`${x.osmId}-${x.latitude}`} testID={`address-result-${x.osmId}`} style={styles.result} onPress={() => { setAddress({ label: x.displayName, latitude: x.latitude, longitude: x.longitude }); setResults([]); }}>
-          <Ionicons name="pin-outline" size={18} color={colors.moonGlow} />
+        <Pressable key={`${x.osmId}-${x.latitude}`} testID={`address-result-${x.osmId}`} style={styles.resultRow} onPress={() => { setAddress({ label: x.displayName, latitude: x.latitude, longitude: x.longitude }); setResults([]); }}>
+          <Ionicons name="pin-outline" size={17} color={colors.onSurface} />
           <Text style={styles.resultText}>{x.displayName}</Text>
         </Pressable>
       ))}
       <LeafletMap testID="address-map" latitude={address.latitude} longitude={address.longitude} onPick={onPickPin} height={240} />
       {address.latitude ? (
         <View style={styles.mapMeta}>
-          <Ionicons name="pin" size={18} color={colors.moonGlow} />
+          <Ionicons name="pin" size={16} color={colors.onSurface} />
           <Text style={styles.mapMetaText}>{address.latitude.toFixed(4)}, {address.longitude?.toFixed(4)}</Text>
-          <Pressable onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${address.latitude}&mlon=${address.longitude}#map=17/${address.latitude}/${address.longitude}`)}>
-            <Text style={styles.link}>{t.openMap}</Text>
-          </Pressable>
+          <Pressable onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${address.latitude}&mlon=${address.longitude}#map=17/${address.latitude}/${address.longitude}`)}><Text style={styles.link}>{t.openMap}</Text></Pressable>
         </View>
       ) : <Text style={styles.mapCredit}>{t.mapCredit}</Text>}
     </View>
   );
 }
 
-function ScheduleStep({ t, date, setDate, time, setTime, notes, setNotes }: any) {
+function ScheduleStep({ t, lang, date, setDate, time, setTime, notes, setNotes }: any) {
   const styles = useStyles(); const { colors } = useTheme();
   return (
-    <View style={{ gap: 17 }}>
-      <Text style={styles.fieldLabel}>{t === copy.id ? "Tanggal layanan" : "Service date"}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+    <View style={{ gap: 16, marginTop: 20 }}>
+      <Text style={styles.fieldLabel}>{lang === "id" ? "TANGGAL LAYANAN" : "SERVICE DATE"}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
         {nextDates.map((x) => (
-          <Pressable key={x.value} testID={`date-${x.value}`} style={[styles.date, date === x.value && styles.dateActive]} onPress={() => setDate(x.value)}>
-            <Text style={[styles.dateDay, date === x.value && styles.activeText]}>{t === copy.id ? x.idDay : x.day}</Text>
-            <Text style={[styles.dateNumber, date === x.value && styles.activeText]}>{x.number}</Text>
+          <Pressable key={x.value} testID={`date-${x.value}`} style={[styles.dateChip, date === x.value && styles.dateChipActive]} onPress={() => setDate(x.value)}>
+            <Text style={[styles.dateChipDay, date === x.value && { color: colors.onBrand }]}>{lang === "id" ? x.idDay : x.day}</Text>
+            <Text style={[styles.dateChipNum, date === x.value && { color: colors.onBrand }]}>{x.number}</Text>
           </Pressable>
         ))}
       </ScrollView>
-      <Text style={styles.fieldLabel}>{t === copy.id ? "Slot waktu" : "Time slot"}</Text>
+      <Text style={styles.fieldLabel}>{lang === "id" ? "SLOT WAKTU" : "TIME SLOT"}</Text>
       <View style={styles.timeGrid}>
         {slots.map((x) => (
-          <Pressable key={x} testID={`slot-${x}`} style={[styles.time, time === x && styles.dateActive]} onPress={() => setTime(x)}>
-            <Ionicons name="time-outline" size={17} color={time === x ? colors.moonGlow : colors.muted} />
-            <Text style={styles.small}>{x}</Text>
+          <Pressable key={x} testID={`slot-${x}`} style={[styles.timeChip, time === x && styles.timeChipActive]} onPress={() => setTime(x)}>
+            <Ionicons name="time-outline" size={15} color={time === x ? colors.onBrand : colors.onSurface} />
+            <Text style={[styles.timeChipText, time === x && { color: colors.onBrand }]}>{x}</Text>
           </Pressable>
         ))}
       </View>
@@ -496,22 +690,18 @@ function ScheduleStep({ t, date, setDate, time, setTime, notes, setNotes }: any)
   );
 }
 
-function Review({ service, vehicle, address, date, time, t, quote }: any) {
-  const styles = useStyles(); const { colors } = useTheme();
-  const lang: Lang = t === copy.id ? "id" : "en";
+function Review({ service, vehicle, address, date, time, t, lang, quote }: any) {
+  const styles = useStyles();
   const items: InvoiceItem[] = quote?.items || [{ label: service.name, label_id: service.name_id, amount: service.price }];
   const total = quote?.total ?? service.price;
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: 12, marginTop: 20 }}>
       <ReviewRow icon="sparkles-outline" label={service.name} value={money(total)} />
       <ReviewRow icon="car-outline" label={t.selectVehicle} value={`${vehicle.make} ${vehicle.model} · ${vehicle.plate} · ${vehicle.type}`} />
       <ReviewRow icon="pin-outline" label={t.address} value={address.label} />
       <ReviewRow icon="calendar-outline" label={t.schedule} value={`${date} · ${time}`} />
       <View testID="review-breakdown" style={styles.breakdown}>
-        <View style={styles.breakdownHeader}>
-          <Ionicons name="pricetag-outline" size={17} color={colors.moonGlow} />
-          <Text style={styles.breakdownTitle}>{t.priceBreakdown}</Text>
-        </View>
+        <Text style={styles.groupTitle}>{t.priceBreakdown.toUpperCase()}</Text>
         {items.map((item, idx) => (
           <View key={`${item.label}-${idx}`} style={styles.breakdownRow}>
             <Text style={styles.breakdownLabel}>{lang === "id" && item.label_id ? item.label_id : item.label}</Text>
@@ -519,200 +709,10 @@ function Review({ service, vehicle, address, date, time, t, quote }: any) {
           </View>
         ))}
         <View style={[styles.breakdownRow, styles.breakdownTotal]}>
-          <Text style={styles.breakdownTotalLabel}>{t.total}</Text>
+          <Text style={styles.breakdownTotalLabel}>{t.total.toUpperCase()}</Text>
           <Text testID="review-total" style={styles.breakdownTotalValue}>{money(total)}</Text>
         </View>
       </View>
-      <View style={styles.unpaid}>
-        <Ionicons name="wallet-outline" size={18} color={colors.moonGlow} />
-        <Text style={styles.unpaidText}>{t.unpaid}</Text>
-      </View>
-    </View>
-  );
-}
-
-function InvoiceModal({ order, close, t, lang }: any) {
-  const styles = useStyles(); const { colors } = useTheme(); const insets = useSafeAreaInsets();
-  if (!order) return null;
-  const langKey: Lang = lang;
-  return (
-    <Modal visible animationType="slide" onRequestClose={close}>
-      <View style={[styles.modal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <View style={styles.modalHeader}>
-          <Pressable testID="invoice-close" style={styles.iconButton} onPress={close}>
-            <Ionicons name="close" size={24} color={colors.onSurface} />
-          </Pressable>
-          <Text style={styles.modalTitle}>{t.invoice}</Text>
-          <View style={{ width: 44 }} />
-        </View>
-        <ScrollView contentContainerStyle={styles.invoice}>
-          <View style={styles.invoiceHead}>
-            <Text style={styles.invoiceBrand}>MOONTIR</Text>
-            <View style={styles.invoiceGear}>
-              <Ionicons name="cog-outline" size={16} color={colors.moonGlow} />
-              <Text style={styles.workshop}>{t.workshop}</Text>
-            </View>
-          </View>
-          <Text style={styles.label}>HOME VEHICLE CARE / {order.id.slice(0, 8).toUpperCase()}</Text>
-          <View style={styles.line} />
-
-          {/* TRACKING SECTION */}
-          <View style={styles.sectionHead}>
-            <Ionicons name="navigate-outline" size={18} color={colors.moonGlow} />
-            <Text style={styles.sectionHeadText}>{t.trackingHeading}</Text>
-          </View>
-          <View style={styles.timeline}>
-            {order.status_history.map((item: any, idx: number) => (
-              <View style={styles.timelineRow} key={item.at}>
-                <View style={styles.timelineTrackWrap}>
-                  <View style={styles.timelineDot} />
-                  {idx < order.status_history.length - 1 && <View style={styles.timelineLine} />}
-                </View>
-                <View style={styles.flex}>
-                  <Text style={styles.cardTitle}>{langKey === "id" ? item.label_id : item.label}</Text>
-                  <Text style={styles.muted}>{new Date(item.at).toLocaleString(langKey === "id" ? "id-ID" : "en-US")}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          <View style={styles.line} />
-
-          {/* INVOICE DETAIL SECTION */}
-          <View style={styles.sectionHead}>
-            <Ionicons name="document-text-outline" size={18} color={colors.moonGlow} />
-            <Text style={styles.sectionHeadText}>{t.invoiceHeading}</Text>
-          </View>
-          <Text style={styles.cardTitle}>{order.service_name}</Text>
-          <Text style={styles.muted}>{order.vehicle.make} {order.vehicle.model} · {order.vehicle.plate} · {order.vehicle.type}</Text>
-          <View style={styles.invoiceBlock}>
-            <Text style={styles.fieldLabel}>{t.address}</Text>
-            <Text style={styles.invoiceText}>{order.address.label}</Text>
-            <Text style={styles.fieldLabel}>{t.schedule}</Text>
-            <Text style={styles.invoiceText}>{order.schedule_date} · {order.schedule_time}</Text>
-          </View>
-
-          <View style={styles.breakdown}>
-            {(order.items || []).map((item: InvoiceItem, idx: number) => (
-              <View key={`${item.label}-${idx}`} style={styles.breakdownRow}>
-                <Text style={styles.breakdownLabel}>{langKey === "id" && item.label_id ? item.label_id : item.label}</Text>
-                <Text style={styles.breakdownAmount}>{money(item.amount)}</Text>
-              </View>
-            ))}
-            <View style={[styles.breakdownRow, styles.breakdownTotal]}>
-              <Text style={styles.breakdownTotalLabel}>{t.total}</Text>
-              <Text testID="invoice-total" style={styles.breakdownTotalValue}>{money(order.total)}</Text>
-            </View>
-          </View>
-          <Text style={styles.unpaidText}>{t.unpaid}</Text>
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-}
-
-function ServiceCard({ service, lang, press, selected, compact, testID }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
-  return (
-    <Pressable testID={testID} style={[styles.card, selected && styles.selected, compact && styles.compact]} onPress={press}>
-      <View style={styles.serviceIcon}>
-        <Ionicons name={service.category === "Maintenance" ? "construct-outline" : service.category === "Premium" ? "shield-checkmark-outline" : "water-outline"} size={22} color={colors.moonGlow} />
-      </View>
-      <View style={styles.flex}>
-        <Text style={styles.cardTitle}>{lang === "id" ? service.name_id : service.name}</Text>
-        <Text style={styles.muted}>{lang === "id" ? service.description_id : service.description}</Text>
-        <Text style={styles.meta}>{lang === "id" ? service.duration_id : service.duration} · {money(service.price)}</Text>
-      </View>
-      {!compact && <Ionicons name={selected ? "checkmark-circle" : "chevron-forward"} size={21} color={selected ? colors.success : colors.muted} />}
-    </Pressable>
-  );
-}
-
-function VehicleCard({ vehicle, selected, press, testID }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
-  return (
-    <Pressable testID={testID} style={[styles.card, selected && styles.selected]} onPress={press}>
-      <View style={styles.serviceIcon}>
-        <Ionicons name="car-sport-outline" size={24} color={colors.moonGlow} />
-      </View>
-      <View style={styles.flex}>
-        <Text style={styles.cardTitle}>{vehicle.nickname}</Text>
-        <Text style={styles.muted}>{vehicle.make} {vehicle.model} · {vehicle.year} · {vehicle.type}</Text>
-        <Text style={styles.plate}>{vehicle.plate}</Text>
-      </View>
-      {selected !== undefined && <Ionicons name={selected ? "radio-button-on" : "radio-button-off"} size={21} color={selected ? colors.brand : colors.muted} />}
-    </Pressable>
-  );
-}
-
-function OrderCard({ order, t, invoice }: any) {
-  const styles = useStyles(); const { colors } = useTheme();
-  return (
-    <View testID={`order-${order.id}`} style={[styles.card, { flexDirection: "column", alignItems: "stretch" }]}>
-      <View style={styles.orderTop}>
-        <View style={styles.dot} />
-        <Text style={styles.status}>{t === copy.id ? "Dispatch aktif" : "Dispatch active"}</Text>
-        <Text style={styles.muted}>{order.schedule_date}</Text>
-      </View>
-      <Text style={styles.cardTitle}>{order.service_name}</Text>
-      <Text style={styles.muted}>{order.vehicle.make} {order.vehicle.model} · {order.schedule_time}</Text>
-      <View style={styles.orderBottom}>
-        <Text style={styles.total}>{money(order.total)}</Text>
-        <Pressable testID={`order-open-${order.id}`} style={styles.smallButton} onPress={invoice}>
-          <Ionicons name="document-text-outline" size={16} color={colors.moonGlow} />
-          <Text style={styles.small}>{t.invoice}</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function Header({ user, t }: any) {
-  const styles = useStyles();
-  const now = new Date();
-  const hhmm = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return (
-    <View style={styles.header}>
-      <View>
-        <Text style={styles.eyebrow}>MOONTIR · {hhmm}</Text>
-        <Text style={styles.heading}>{t.hello}, {user.name.split(" ")[0]}</Text>
-        <Text style={styles.muted}>{t.subtitle}</Text>
-      </View>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{user.name[0].toUpperCase()}</Text>
-      </View>
-    </View>
-  );
-}
-
-function Title({ eyebrow, title, subtitle }: any) {
-  const styles = useStyles();
-  return (
-    <View style={styles.title}>
-      <Text style={styles.eyebrow}>{eyebrow}</Text>
-      <Text style={styles.heading}>{title}</Text>
-      <Text style={styles.muted}>{subtitle}</Text>
-    </View>
-  );
-}
-
-function Section({ title, action }: any) {
-  const styles = useStyles();
-  return <View style={styles.section}><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.link}>{action}</Text></View>;
-}
-
-function Category({ icon, label }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
-  return <View style={styles.category}><Ionicons name={icon} size={20} color={colors.moonGlow} /><Text style={styles.small}>{label}</Text></View>;
-}
-
-function Empty({ icon, title, hint }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
-  return (
-    <View style={styles.empty}>
-      <Ionicons name={icon} size={40} color={colors.moonGlow} />
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Text style={styles.muted}>{hint}</Text>
     </View>
   );
 }
@@ -721,62 +721,89 @@ function ReviewRow({ icon, label, value }: any) {
   const { colors } = useTheme(); const styles = useStyles();
   return (
     <View style={styles.reviewRow}>
-      <Ionicons name={icon} size={20} color={colors.moonGlow} />
-      <View style={styles.flex}>
-        <Text style={styles.fieldLabel}>{label}</Text>
+      <Ionicons name={icon} size={18} color={colors.onSurface} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
         <Text style={styles.reviewValue}>{value}</Text>
       </View>
     </View>
   );
 }
 
-function Nav({ screen, current, setScreen, label }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
-  const icons: any = { home: "home-outline", services: "sparkles-outline", garage: "car-outline", orders: "receipt-outline", profile: "person-outline" };
-  return (
-    <Pressable style={styles.navItem} onPress={() => setScreen(screen)} testID={`tab-${screen}`}>
-      <Ionicons name={icons[screen]} size={21} color={screen === current ? colors.moonGlow : colors.muted} />
-      <Text style={[styles.navText, screen === current && styles.activeText]}>{label}</Text>
-    </Pressable>
-  );
-}
+/* ---------------- INVOICE MODAL ---------------- */
 
-function Field({ label, value, onChangeText, icon, secureTextEntry, keyboardType, multiline, testID }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
+function InvoiceModal({ order, close, t, lang }: any) {
+  const styles = useStyles(); const { colors } = useTheme(); const insets = useSafeAreaInsets();
+  if (!order) return null;
   return (
-    <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={[styles.inputWrap, multiline && styles.multilineWrap]}>
-        <Ionicons name={icon} size={18} color={colors.muted} />
-        <TextInput testID={testID} value={value} onChangeText={onChangeText} secureTextEntry={secureTextEntry} keyboardType={keyboardType} multiline={multiline} placeholder={label} placeholderTextColor={colors.muted} style={styles.textInput} />
+    <Modal visible animationType="slide" onRequestClose={close}>
+      <View style={[styles.modal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={styles.modalHeader}>
+          <Pressable testID="invoice-close" style={styles.iconButton} onPress={close}><Ionicons name="chevron-back" size={22} color={colors.onSurface} /></Pressable>
+          <MoontirLogo width={110} height={26} />
+          <View style={{ width: 44 }} />
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 22 }}>
+          <Text style={styles.modalKicker}>HOME VEHICLE CARE · {order.id.slice(0, 8).toUpperCase()}</Text>
+
+          <View style={styles.sectionHead}><Ionicons name="navigate-outline" size={17} color={colors.onSurface} /><Text style={styles.sectionHeadText}>{t.trackingHeading.toUpperCase()}</Text></View>
+          <View style={styles.timeline}>
+            {order.status_history.map((item: any, idx: number) => (
+              <View key={item.at} style={styles.timelineRow}>
+                <View style={styles.timelineTrackWrap}>
+                  <View style={styles.timelineDot} />
+                  {idx < order.status_history.length - 1 && <View style={styles.timelineLine} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>{lang === "id" ? item.label_id : item.label}</Text>
+                  <Text style={styles.muted}>{new Date(item.at).toLocaleString(lang === "id" ? "id-ID" : "en-US")}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.sectionHead}><Ionicons name="document-text-outline" size={17} color={colors.onSurface} /><Text style={styles.sectionHeadText}>{t.invoiceHeading.toUpperCase()}</Text></View>
+          <Text style={styles.rowTitle}>{order.service_name}</Text>
+          <Text style={styles.rowSub}>{order.vehicle.make} {order.vehicle.model} · {order.vehicle.plate} · {order.vehicle.type}</Text>
+          <View style={styles.invoiceBlock}>
+            <Text style={styles.fieldLabel}>{t.address.toUpperCase()}</Text>
+            <Text style={styles.rowSub}>{order.address.label}</Text>
+            <Text style={styles.fieldLabel}>{t.schedule.toUpperCase()}</Text>
+            <Text style={styles.rowSub}>{order.schedule_date} · {order.schedule_time}</Text>
+          </View>
+          <View style={styles.breakdown}>
+            {(order.items || []).map((item: InvoiceItem, idx: number) => (
+              <View key={`${item.label}-${idx}`} style={styles.breakdownRow}>
+                <Text style={styles.breakdownLabel}>{lang === "id" && item.label_id ? item.label_id : item.label}</Text>
+                <Text style={styles.breakdownAmount}>{money(item.amount)}</Text>
+              </View>
+            ))}
+            <View style={[styles.breakdownRow, styles.breakdownTotal]}>
+              <Text style={styles.breakdownTotalLabel}>{t.total.toUpperCase()}</Text>
+              <Text testID="invoice-total" style={styles.breakdownTotalValue}>{money(order.total)}</Text>
+            </View>
+          </View>
+          <Text style={styles.unpaid}>{t.unpaid}</Text>
+        </ScrollView>
       </View>
-    </View>
+    </Modal>
   );
 }
 
-function Button({ label, onPress, busy, disabled, testID }: any) {
-  const { colors } = useTheme(); const styles = useStyles();
-  return (
-    <Pressable testID={testID} onPress={onPress} disabled={busy || disabled} style={({ pressed }) => [styles.button, (pressed || disabled) && styles.dim]}>
-      <Text style={styles.buttonText}>{busy ? "…" : label}</Text>
-      {!busy && <Ionicons name="arrow-forward" size={17} color={colors.onBrandPrimary} />}
-    </Pressable>
-  );
-}
+/* ---------------- VEHICLE MODAL ---------------- */
 
-function VehicleModal({ open, close, form, setForm, save, t, busy, error }: any) {
+function VehicleModal({ state, close, form, setForm, save, t, busy, error }: any) {
   const insets = useSafeAreaInsets(); const styles = useStyles(); const { colors } = useTheme();
-  const update = (key: string, value: string) => setForm({ ...form, [key]: value });
+  const update = (key: keyof VehiclePayload, value: string) => setForm({ ...form, [key]: value });
+  const isEdit = !!state.edit;
   return (
-    <Modal visible={open} animationType="slide" transparent onRequestClose={close}>
+    <Modal visible={state.open} animationType="slide" transparent onRequestClose={close}>
       <View style={styles.backdrop}>
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 14 }]}>
           <View style={styles.handle} />
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{t.addVehicle}</Text>
-            <Pressable testID="vehicle-close" style={styles.iconButton} onPress={close}>
-              <Ionicons name="close" size={24} color={colors.onSurface} />
-            </Pressable>
+            <Text style={styles.modalTitle}>{isEdit ? t.editVehicle : t.addVehicle}</Text>
+            <Pressable testID="vehicle-close" style={styles.iconButton} onPress={close}><Ionicons name="close" size={22} color={colors.onSurface} /></Pressable>
           </View>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 20 }}>
             <Field testID="vehicle-nickname" label={t.nickname} value={form.nickname} onChangeText={(v: string) => update("nickname", v)} icon="bookmark-outline" />
@@ -788,22 +815,16 @@ function VehicleModal({ open, close, form, setForm, save, t, busy, error }: any)
               <Field testID="vehicle-year" label={t.year} value={form.year} onChangeText={(v: string) => update("year", v)} icon="calendar-outline" keyboardType="number-pad" />
               <Field testID="vehicle-plate" label={t.plate} value={form.plate} onChangeText={(v: string) => update("plate", v.toUpperCase())} icon="keypad-outline" />
             </View>
-            <Text style={styles.fieldLabel}>{t.vehicleType}</Text>
+            <Text style={styles.fieldLabel}>{t.vehicleType.toUpperCase()}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 8, paddingHorizontal: 2 }}>
-              {VEHICLE_TYPES.map((typeKey) => (
-                <Pressable
-                  key={typeKey}
-                  testID={`vehicle-type-${typeKey}`}
-                  onPress={() => update("type", typeKey)}
-                  style={[styles.typeChip, form.type === typeKey && styles.typeChipActive]}
-                >
-                  <Ionicons name={typeKey === "Truck" || typeKey === "Pickup" ? "bus-outline" : typeKey === "SUV" || typeKey === "MPV" ? "car-sport-outline" : "car-outline"} size={16} color={form.type === typeKey ? colors.moonGlow : colors.muted} />
-                  <Text style={[styles.typeChipText, form.type === typeKey && styles.typeChipTextActive]}>{typeKey}</Text>
+              {VEHICLE_TYPES.map((k) => (
+                <Pressable key={k} testID={`vehicle-type-${k}`} onPress={() => update("type", k)} style={[styles.chip, form.type === k && styles.chipActive]}>
+                  <Text style={[styles.chipText, form.type === k && styles.chipTextActive]}>{k.toUpperCase()}</Text>
                 </Pressable>
               ))}
             </ScrollView>
             {error ? <Text style={styles.error}>{error}</Text> : null}
-            <Button testID="vehicle-save" label={t.save} onPress={save} busy={busy} />
+            <Button testID="vehicle-save" label={isEdit ? t.saveChanges : t.save} onPress={save} busy={busy} />
           </ScrollView>
         </View>
       </View>
@@ -811,144 +832,235 @@ function VehicleModal({ open, close, form, setForm, save, t, busy, error }: any)
   );
 }
 
+function ConfirmModal({ vehicle, close, confirm, t, busy }: any) {
+  const styles = useStyles(); const { colors } = useTheme(); const insets = useSafeAreaInsets();
+  if (!vehicle) return null;
+  return (
+    <Modal visible animationType="fade" transparent onRequestClose={close}>
+      <View style={styles.backdrop}>
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 14, maxHeight: "60%" }]}>
+          <View style={styles.handle} />
+          <View style={{ padding: 4, gap: 8 }}>
+            <Text style={styles.modalTitle}>{t.deleteVehicle}</Text>
+            <Text style={styles.muted}>{t.confirmDelete}</Text>
+            <View style={styles.confirmVehicleCard}>
+              <Ionicons name="car-sport-outline" size={18} color={colors.onSurface} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>{vehicle.nickname}</Text>
+                <Text style={styles.rowSub}>{vehicle.make} {vehicle.model} · {vehicle.plate}</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+              <Pressable testID="confirm-cancel" style={[styles.button, styles.buttonGhost, { flex: 1 }]} onPress={close}>
+                <Text style={[styles.buttonText, { color: colors.onSurface }]}>{t.cancel}</Text>
+              </Pressable>
+              <Pressable testID="confirm-delete" style={[styles.button, { flex: 1, backgroundColor: colors.error }]} onPress={() => confirm(vehicle)} disabled={busy}>
+                <Text style={styles.buttonText}>{busy ? "…" : t.remove}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* ---------------- FIELD & BUTTON ---------------- */
+
+function Field({ label, value, onChangeText, icon, secureTextEntry, keyboardType, multiline, testID }: any) {
+  const { colors } = useTheme(); const styles = useStyles();
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <View style={[styles.inputWrap, multiline && styles.multilineWrap]}>
+        <Ionicons name={icon} size={17} color={colors.muted} />
+        <TextInput testID={testID} value={value} onChangeText={onChangeText} secureTextEntry={secureTextEntry} keyboardType={keyboardType} multiline={multiline} placeholder={label} placeholderTextColor={colors.muted} style={styles.textInput} />
+      </View>
+    </View>
+  );
+}
+
+function Button({ label, onPress, busy, disabled, testID }: any) {
+  const { colors } = useTheme(); const styles = useStyles();
+  return (
+    <Pressable testID={testID} onPress={onPress} disabled={busy || disabled} style={({ pressed }) => [styles.button, (pressed || disabled) && styles.dim]}>
+      <Text style={styles.buttonText}>{busy ? "…" : label}</Text>
+      {!busy && <Ionicons name="arrow-forward" size={16} color={colors.onBrandPrimary} />}
+    </Pressable>
+  );
+}
+
+/* ---------------- STYLES ---------------- */
+
 const useStyles = makeStyles((colors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  glow: { position: "absolute", width: 280, height: 280, borderRadius: 140, backgroundColor: colors.brandTertiary, top: -170, right: -100 },
-  glowSecondary: { position: "absolute", width: 220, height: 220, borderRadius: 110, backgroundColor: colors.brandTertiary, bottom: -120, left: -60, opacity: 0.6 },
-  loading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14, backgroundColor: colors.surface },
-  brand: { color: colors.onSurface, fontSize: 18, fontWeight: "900", letterSpacing: 3 },
-  brandGearBadge: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.borderStrong },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 24 },
-  eyebrow: { color: colors.moonGlow, fontSize: 11, fontWeight: "900", letterSpacing: 1.6 },
-  heading: { color: colors.onSurface, fontSize: 29, fontWeight: "900", marginTop: 5 },
-  muted: { color: colors.muted, fontSize: 14, lineHeight: 20 },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong },
-  avatarText: { color: colors.moonGlow, fontWeight: "900", fontSize: 18 },
-  hero: { minHeight: 225, borderRadius: 22, padding: 21, marginBottom: 17, overflow: "hidden" },
-  heroMoon: { position: "absolute", right: 20, top: 20 },
-  heroGear: { position: "absolute", left: -12, bottom: -12, width: 90, height: 90, borderRadius: 45, borderWidth: 1, borderColor: "rgba(147,197,253,0.25)", alignItems: "center", justifyContent: "center" },
-  kicker: { color: colors.onBrandPrimary, opacity: 0.7, fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
-  heroTitle: { color: colors.onBrandPrimary, fontSize: 27, fontWeight: "900", marginTop: 14, maxWidth: 220 },
-  heroBody: { color: colors.onBrandPrimary, opacity: 0.8, marginVertical: 9 },
-  button: { minHeight: 48, borderRadius: 14, paddingHorizontal: 18, backgroundColor: colors.brandPrimary, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
-  buttonText: { color: colors.onBrandPrimary, fontSize: 14, fontWeight: "900" },
-  dim: { opacity: 0.45 },
-  card: { flexDirection: "row", alignItems: "center", gap: 13, padding: 15, minHeight: 90, borderRadius: 18, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  flex: { flex: 1 },
-  label: { color: colors.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
-  cardTitle: { color: colors.onSurface, fontSize: 16, fontWeight: "800", marginTop: 3 },
-  section: { flexDirection: "row", justifyContent: "space-between", marginTop: 28, marginBottom: 13 },
-  sectionTitle: { color: colors.onSurface, fontSize: 19, fontWeight: "900" },
-  link: { color: colors.moonGlow, fontSize: 13, fontWeight: "800" },
-  row: { gap: 12 },
-  compact: { width: 270, alignItems: "flex-start" },
-  serviceIcon: { width: 45, height: 45, borderRadius: 15, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" },
-  selected: { backgroundColor: colors.brandTertiary, borderColor: colors.borderStrong },
-  meta: { color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "700", marginTop: 7 },
-  categories: { flexDirection: "row", gap: 10 },
-  category: { flex: 1, minHeight: 82, justifyContent: "space-between", padding: 12, borderRadius: 15, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  small: { color: colors.moonGlow, fontSize: 12, fontWeight: "800" },
-  title: { paddingTop: 8, marginBottom: 22 },
-  outline: { minHeight: 50, borderRadius: 14, borderWidth: 1, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
-  outlineText: { color: colors.moonGlow, fontWeight: "900" },
-  plate: { color: colors.moonGlow, fontSize: 12, fontWeight: "900", letterSpacing: 1, marginTop: 4 },
-  empty: { minHeight: 260, marginTop: 16, alignItems: "center", justifyContent: "center", gap: 8, padding: 25, borderRadius: 20, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  orderTop: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 12 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
-  status: { color: colors.success, flex: 1, fontWeight: "800", fontSize: 12 },
-  orderBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: colors.divider, marginTop: 16, paddingTop: 13 },
-  total: { color: colors.onSurface, fontSize: 17, fontWeight: "900" },
-  smallButton: { minHeight: 38, borderRadius: 10, paddingHorizontal: 12, gap: 6, backgroundColor: colors.brandTertiary, flexDirection: "row", alignItems: "center" },
-  profile: { alignItems: "center", padding: 24, backgroundColor: colors.surfaceSecondary, borderRadius: 20, borderWidth: 1, borderColor: colors.border },
-  profileAvatar: { width: 74, height: 74, borderRadius: 37, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: 12, borderWidth: 1, borderColor: colors.borderStrong },
-  profileMoon: { position: "absolute", top: 6, right: 6 },
-  profileInitial: { color: colors.moonGlow, fontSize: 30, fontWeight: "900" },
-  profileName: { color: colors.onSurface, fontSize: 21, fontWeight: "900" },
-  settings: { marginTop: 22, paddingHorizontal: 15, borderRadius: 18, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  setting: { minHeight: 60, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 1, borderBottomColor: colors.divider },
-  settingLabel: { color: colors.onSurface, fontSize: 14, fontWeight: "700" },
-  settingValue: { color: colors.muted, fontSize: 13, fontWeight: "700" },
-  logout: { minHeight: 52, marginTop: 22, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, backgroundColor: colors.surface },
+  brandKicker: { color: colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 2.4, marginTop: 12 },
+
+  topBar: { minHeight: 52, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  topBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  badge: { position: "absolute", top: 3, right: 3, minWidth: 16, height: 16, paddingHorizontal: 4, borderRadius: 8, backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center" },
+  badgeText: { color: colors.surface, fontSize: 9, fontWeight: "900" },
+
+  hi: { color: colors.onSurface, fontSize: 22, fontWeight: "700", marginTop: 4 },
+  hiSub: { color: colors.onSurfaceSecondary, fontSize: 14, marginTop: 2, marginBottom: 20 },
+
+  hero: { flexDirection: "row", padding: 18, borderRadius: 20, backgroundColor: colors.surfaceSecondary, alignItems: "center", overflow: "hidden" },
+  heroKicker: { color: colors.onSurface, fontSize: 10, fontWeight: "800", letterSpacing: 2, marginBottom: 6 },
+  heroBig: { color: colors.onSurface, fontSize: 22, fontWeight: "800", letterSpacing: 1 },
+  heroLine: { color: colors.onSurfaceSecondary, fontSize: 12, marginTop: 6, marginBottom: 14 },
+  heroBtn: { alignSelf: "flex-start", paddingHorizontal: 14, minHeight: 36, borderRadius: 18, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  heroBtnText: { color: colors.onBrand, fontSize: 10, letterSpacing: 1.4, fontWeight: "900" },
+  heroImg: { width: 110, height: 110, borderRadius: 14 },
+
+  activeCard: { marginTop: 16, flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
+  activeKicker: { color: colors.onSurfaceSecondary, fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
+  activeTitle: { color: colors.onSurface, fontSize: 15, fontWeight: "800", marginTop: 3 },
+
+  sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 28, marginBottom: 14 },
+  sectionKicker: { color: colors.onSurface, fontSize: 11, fontWeight: "800", letterSpacing: 2 },
+  viewAll: { color: colors.onSurface, fontSize: 10, fontWeight: "900", letterSpacing: 1.6, textDecorationLine: "underline" },
+
+  circleRow: { flexDirection: "row", gap: 12, justifyContent: "space-between" },
+  circleWrap: { flex: 1, alignItems: "center", gap: 8 },
+  circle: { width: 84, height: 84, borderRadius: 42, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
+  circleLabel: { color: colors.onSurface, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, textAlign: "center" },
+
+  tile: { marginTop: 24, padding: 18, borderRadius: 16, backgroundColor: colors.surfaceSecondary, flexDirection: "row", alignItems: "center", gap: 14 },
+  tileTitle: { color: colors.onSurface, fontSize: 15, fontWeight: "800", letterSpacing: 1 },
+  tileKicker: { color: colors.onSurfaceSecondary, fontSize: 9, fontWeight: "900", letterSpacing: 1.6, marginTop: 6 },
+
+  rowCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, minHeight: 84, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  rowCardSelected: { borderColor: colors.brand, borderWidth: 1.5 },
+  rowIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center" },
+  rowTitle: { color: colors.onSurface, fontSize: 14, fontWeight: "800" },
+  rowSub: { color: colors.onSurfaceSecondary, fontSize: 12, marginTop: 3, lineHeight: 17 },
+  rowMeta: { color: colors.onSurface, fontSize: 12, fontWeight: "700", marginTop: 6 },
+  plusBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  plate: { color: colors.onSurface, fontSize: 11, fontWeight: "900", letterSpacing: 1, marginTop: 4 },
+
+  vehicleCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  iconAction: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  confirmVehicleCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, marginTop: 8 },
+
+  pageTitle: { color: colors.onSurface, fontSize: 26, fontWeight: "800", marginTop: 4 },
+  groupTitle: { color: colors.onSurface, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+
+  searchBox: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, minHeight: 48, borderRadius: 24, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, marginTop: 18 },
+  searchInput: { flex: 1, color: colors.onSurface, fontSize: 14 },
+
+  chipRow: { gap: 8, paddingVertical: 16 },
+  chip: { paddingHorizontal: 14, minHeight: 34, borderRadius: 17, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  chipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  chipText: { color: colors.onSurface, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  chipTextActive: { color: colors.onBrand },
+
+  outlineCta: { minHeight: 48, marginTop: 16, borderRadius: 24, borderWidth: 1, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, backgroundColor: colors.surfaceTertiary },
+  outlineCtaText: { color: colors.onSurface, fontWeight: "800", fontSize: 13 },
+
+  orderRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+
+  profileHead: { alignItems: "center", padding: 22, marginTop: 18, borderRadius: 20, backgroundColor: colors.surfaceSecondary },
+  profileAvatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center", marginBottom: 10, borderWidth: 1, borderColor: colors.border },
+  profileInitial: { color: colors.onSurface, fontSize: 28, fontWeight: "900" },
+  profileName: { color: colors.onSurface, fontSize: 18, fontWeight: "800" },
+
+  settingsBlock: { marginTop: 24, paddingHorizontal: 16, borderRadius: 18, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  settingRow: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 1, borderBottomColor: colors.divider },
+  settingLabel: { color: colors.onSurface, fontSize: 13, fontWeight: "700" },
+  settingValue: { color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "700" },
+  logout: { minHeight: 50, marginTop: 22, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
   logoutText: { color: colors.error, fontWeight: "800" },
-  nav: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 13, paddingTop: 9 },
-  navBlur: { minHeight: 67, borderRadius: 22, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, flexDirection: "row" },
+
+  nav: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  navInner: { flexDirection: "row", paddingTop: 10, paddingHorizontal: 4 },
   navItem: { flex: 1, minHeight: 56, alignItems: "center", justifyContent: "center", gap: 4 },
-  navText: { color: colors.muted, fontSize: 10, fontWeight: "800" },
+  navText: { color: colors.muted, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+
   auth: { flex: 1, backgroundColor: colors.surface },
-  authContent: { padding: 24, paddingTop: 112, paddingBottom: 30 },
-  brandRow: { flexDirection: "row", gap: 10, alignItems: "center", marginBottom: 27 },
-  authTitle: { color: colors.onSurface, fontSize: 34, lineHeight: 39, fontWeight: "900", maxWidth: 320, marginTop: 8 },
-  lang: { position: "absolute", zIndex: 3, top: 52, right: 20, minHeight: 44, paddingHorizontal: 12, borderRadius: 22, flexDirection: "row", gap: 6, alignItems: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  langText: { color: colors.moonGlow, fontWeight: "900" },
-  authCard: { marginTop: 28, padding: 18, borderRadius: 22, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  switch: { minHeight: 50, alignItems: "center", justifyContent: "center", flexDirection: "row" },
-  field: { flex: 1, gap: 6, marginBottom: 12 },
-  fieldLabel: { color: colors.muted, fontSize: 12, fontWeight: "800" },
-  inputWrap: { minHeight: 50, borderRadius: 13, paddingHorizontal: 12, gap: 9, flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  authContent: { padding: 26, paddingTop: 90, paddingBottom: 40 },
+  authBrand: { alignItems: "center", gap: 8, marginBottom: 30 },
+  divider: { width: 26, height: 1, backgroundColor: colors.borderStrong, marginTop: 4 },
+  tagline: { color: colors.onSurface, fontSize: 10, fontWeight: "800", letterSpacing: 2.2 },
+  authTitle: { color: colors.onSurface, fontSize: 30, lineHeight: 34, fontWeight: "800", marginBottom: 6 },
+  authCard: { marginTop: 22, padding: 18, borderRadius: 20, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  switch: { minHeight: 48, alignItems: "center", justifyContent: "center", flexDirection: "row", marginTop: 12 },
+  langChip: { position: "absolute", zIndex: 3, top: 56, right: 20, minHeight: 40, paddingHorizontal: 12, borderRadius: 20, flexDirection: "row", gap: 6, alignItems: "center", backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  langChipText: { color: colors.onSurface, fontWeight: "900", fontSize: 12 },
+
+  fieldWrap: { flex: 1, gap: 6, marginBottom: 12 },
+  fieldLabel: { color: colors.onSurfaceSecondary, fontSize: 10, fontWeight: "900", letterSpacing: 1.4 },
+  inputWrap: { minHeight: 50, borderRadius: 14, paddingHorizontal: 12, gap: 9, flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   multilineWrap: { alignItems: "flex-start", paddingTop: 11 },
-  textInput: { flex: 1, color: colors.onSurface, minHeight: 47, fontSize: 14 },
-  error: { color: colors.error, fontSize: 13, lineHeight: 18, marginBottom: 12 },
+  textInput: { flex: 1, color: colors.onSurface, minHeight: 46, fontSize: 14 },
+
+  button: { minHeight: 50, borderRadius: 25, paddingHorizontal: 20, backgroundColor: colors.brand, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
+  buttonGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.borderStrong },
+  buttonText: { color: colors.onBrand, fontSize: 12, fontWeight: "900", letterSpacing: 1.4 },
+  dim: { opacity: 0.45 },
+
+  muted: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  link: { color: colors.onSurface, fontSize: 12, fontWeight: "900", letterSpacing: 1, textDecorationLine: "underline" },
+  error: { color: colors.error, fontSize: 12, marginBottom: 12, fontWeight: "700" },
+  total: { color: colors.onSurface, fontSize: 15, fontWeight: "900", marginTop: 6 },
+  cardTitle: { color: colors.onSurface, fontSize: 15, fontWeight: "800" },
+
+  empty: { minHeight: 220, marginTop: 20, alignItems: "center", justifyContent: "center", gap: 8, padding: 22, borderRadius: 18, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+
   modal: { flex: 1, backgroundColor: colors.surface },
-  modalHeader: { minHeight: 58, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: colors.divider },
+  modalHeader: { minHeight: 56, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: colors.divider },
   iconButton: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
-  rail: { flex: 1, flexDirection: "row", gap: 4, marginHorizontal: 12 },
-  railLine: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.surfaceTertiary },
-  railActive: { backgroundColor: colors.brand },
-  modalScroll: { padding: 20, paddingBottom: 130 },
-  footer: { position: "absolute", bottom: 0, left: 0, right: 0, padding: 16, flexDirection: "row", justifyContent: "space-between", gap: 14, backgroundColor: colors.surface },
+  railWrap: { flexDirection: "row", gap: 6, paddingHorizontal: 22, paddingVertical: 12 },
+  railDot: { flex: 1, height: 3, borderRadius: 2, backgroundColor: colors.divider },
+  railDotActive: { backgroundColor: colors.brand },
+  modalScroll: { padding: 22, paddingBottom: 130 },
+  modalKicker: { color: colors.onSurfaceSecondary, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  modalTitle: { color: colors.onSurface, fontSize: 24, fontWeight: "800", marginTop: 6, marginBottom: 6 },
+  footer: { position: "absolute", bottom: 0, left: 0, right: 0, padding: 16, flexDirection: "row", justifyContent: "space-between", gap: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.divider },
   back: { minHeight: 48, justifyContent: "center", paddingHorizontal: 12 },
-  backText: { color: colors.muted, fontWeight: "900" },
-  actions: { flexDirection: "row", gap: 10 },
-  location: { flex: 1, minHeight: 46, borderRadius: 13, borderWidth: 1, borderColor: colors.borderStrong, justifyContent: "center", alignItems: "center", flexDirection: "row", gap: 6 },
-  input: { minHeight: 52, borderRadius: 14, padding: 14, color: colors.onSurface, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, fontSize: 14 },
-  multiline: { minHeight: 90, textAlignVertical: "top" },
-  result: { flexDirection: "row", gap: 9, padding: 13, borderRadius: 13, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  resultText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 13, lineHeight: 19 },
-  mapMeta: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },
-  mapMetaText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "700" },
-  mapCredit: { color: colors.muted, fontSize: 11, textAlign: "center" },
-  date: { width: 62, minHeight: 74, borderRadius: 15, alignItems: "center", justifyContent: "center", gap: 4, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  dateActive: { backgroundColor: colors.brandTertiary, borderColor: colors.borderStrong },
-  dateDay: { color: colors.muted, fontWeight: "800", fontSize: 12 },
-  dateNumber: { color: colors.onSurface, fontWeight: "900", fontSize: 22 },
-  activeText: { color: colors.moonGlow },
+  backText: { color: colors.onSurfaceSecondary, fontWeight: "900", letterSpacing: 1, fontSize: 12 },
+
+  altBtn: { flex: 1, minHeight: 44, borderRadius: 22, borderWidth: 1, borderColor: colors.borderStrong, justifyContent: "center", alignItems: "center", flexDirection: "row", gap: 6, backgroundColor: colors.surfaceTertiary },
+  altBtnText: { color: colors.onSurface, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  input: { minHeight: 50, borderRadius: 14, padding: 14, color: colors.onSurface, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, fontSize: 14 },
+  multiline: { minHeight: 84, textAlignVertical: "top" },
+  resultRow: { flexDirection: "row", gap: 9, padding: 12, borderRadius: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  resultText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 12, lineHeight: 17 },
+  mapMeta: { flexDirection: "row", alignItems: "center", gap: 8 },
+  mapMetaText: { flex: 1, color: colors.onSurfaceSecondary, fontSize: 11, fontWeight: "700" },
+  mapCredit: { color: colors.muted, fontSize: 10, textAlign: "center" },
+
+  dateChip: { width: 60, minHeight: 72, borderRadius: 16, alignItems: "center", justifyContent: "center", gap: 3, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  dateChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  dateChipDay: { color: colors.onSurfaceSecondary, fontWeight: "800", fontSize: 11 },
+  dateChipNum: { color: colors.onSurface, fontWeight: "900", fontSize: 22 },
   timeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  time: { width: "47%", minHeight: 54, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  unpaid: { flexDirection: "row", alignItems: "center", gap: 8, padding: 14, borderRadius: 14, backgroundColor: colors.brandTertiary },
-  unpaidText: { color: colors.moonGlow, fontWeight: "900", fontSize: 13 },
-  reviewRow: { flexDirection: "row", gap: 12, padding: 15, borderRadius: 15, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  reviewValue: { color: colors.onSurfaceSecondary, fontSize: 14, fontWeight: "700", lineHeight: 20, marginTop: 3 },
-  breakdown: { padding: 15, borderRadius: 16, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: 8 },
-  breakdownHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
-  breakdownTitle: { color: colors.onSurface, fontWeight: "900", fontSize: 14 },
+  timeChip: { width: "47%", minHeight: 48, borderRadius: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  timeChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  timeChipText: { color: colors.onSurface, fontWeight: "800", fontSize: 12 },
+
+  reviewRow: { flexDirection: "row", gap: 12, padding: 14, borderRadius: 16, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, alignItems: "center" },
+  reviewValue: { color: colors.onSurface, fontSize: 13, fontWeight: "700", lineHeight: 18, marginTop: 3 },
+  breakdown: { padding: 16, borderRadius: 16, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, gap: 8 },
   breakdownRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 4 },
-  breakdownLabel: { color: colors.onSurfaceSecondary, fontSize: 13, fontWeight: "700", flex: 1, paddingRight: 8 },
+  breakdownLabel: { color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "700", flex: 1, paddingRight: 8 },
   breakdownAmount: { color: colors.onSurface, fontSize: 13, fontWeight: "800" },
-  breakdownTotal: { borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 10, marginTop: 4 },
-  breakdownTotalLabel: { color: colors.onSurface, fontWeight: "900", fontSize: 15 },
-  breakdownTotalValue: { color: colors.moonGlow, fontWeight: "900", fontSize: 17 },
+  breakdownTotal: { borderTopWidth: 1, borderTopColor: colors.borderStrong, paddingTop: 10, marginTop: 4 },
+  breakdownTotalLabel: { color: colors.onSurface, fontWeight: "900", fontSize: 12, letterSpacing: 1.4 },
+  breakdownTotalValue: { color: colors.onSurface, fontWeight: "900", fontSize: 17 },
+  unpaid: { color: colors.onSurfaceSecondary, fontWeight: "800", fontSize: 12, marginTop: 12, textAlign: "center", letterSpacing: 1 },
+
   backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.overlay },
-  sheet: { maxHeight: "88%", padding: 20, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: colors.surfaceSecondary },
+  sheet: { maxHeight: "88%", padding: 20, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: colors.surface },
   handle: { width: 42, height: 4, borderRadius: 2, alignSelf: "center", backgroundColor: colors.muted, marginBottom: 15 },
   two: { flexDirection: "row", gap: 10 },
-  modalTitle: { color: colors.onSurface, fontSize: 19, fontWeight: "900" },
-  typeChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, minHeight: 36, borderRadius: 18, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, flexShrink: 0 },
-  typeChipActive: { backgroundColor: colors.brandTertiary, borderColor: colors.borderStrong },
-  typeChipText: { color: colors.muted, fontWeight: "800", fontSize: 12 },
-  typeChipTextActive: { color: colors.moonGlow },
-  invoice: { padding: 22 },
-  invoiceHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  invoiceBrand: { color: colors.moonGlow, fontSize: 26, fontWeight: "900", letterSpacing: 2 },
-  invoiceGear: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
-  workshop: { color: colors.moonGlow, fontSize: 11, fontWeight: "800" },
-  line: { height: 1, backgroundColor: colors.divider, marginVertical: 18 },
-  sectionHead: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
-  sectionHeadText: { color: colors.moonGlow, fontSize: 12, fontWeight: "900", letterSpacing: 1.4, textTransform: "uppercase" },
-  invoiceBlock: { gap: 7, marginTop: 14, marginBottom: 18 },
-  invoiceText: { color: colors.onSurfaceSecondary, fontSize: 14, lineHeight: 20 },
-  timeline: { gap: 4, marginBottom: 6 },
-  timelineRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingBottom: 4 },
-  timelineTrackWrap: { alignItems: "center", width: 12, paddingTop: 6 },
-  timelineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success, borderWidth: 2, borderColor: colors.brandTertiary },
+  invoiceBlock: { gap: 6, marginVertical: 14 },
+  sectionHead: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20, marginBottom: 12 },
+  sectionHeadText: { color: colors.onSurface, fontSize: 11, fontWeight: "900", letterSpacing: 1.6 },
+  timeline: { gap: 4 },
+  timelineRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingBottom: 8 },
+  timelineTrackWrap: { alignItems: "center", width: 12, paddingTop: 5 },
+  timelineDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.brand },
   timelineLine: { flex: 1, width: 2, minHeight: 22, backgroundColor: colors.divider, marginTop: 2 },
 }));

@@ -29,22 +29,27 @@ app = FastAPI(title="Moontir API")
 api_router = APIRouter(prefix="/api")
 logger = logging.getLogger("moontir")
 
+# Service groups:
+#   light   — quick, at-home light maintenance and fluid checks
+#   detail  — full detailing / cosmetics
+#   special — Moontir Special Care bundles that combine detailing + light service
 SERVICES = [
-    {"id": "shine", "name": "Moon Shine Detail", "name_id": "Detail Moon Shine", "category": "Detailing", "category_id": "Detailing", "description": "Deep exterior wash, polish, and protection.", "description_id": "Cuci eksterior, poles, dan perlindungan menyeluruh.", "duration": "2–3 hours", "duration_id": "2–3 jam", "price": 275000, "featured": True, "features": ["Foam wash", "Paint polish", "Tire dressing"]},
-    {"id": "care", "name": "Essential Car Care", "name_id": "Perawatan Mobil Esensial", "category": "Maintenance", "category_id": "Perawatan", "description": "A practical checkup for everyday driving confidence.", "description_id": "Pemeriksaan praktis untuk berkendara setiap hari.", "duration": "90 minutes", "duration_id": "90 menit", "price": 185000, "featured": False, "features": ["Fluid check", "Battery check", "Tire pressure"]},
-    {"id": "interior", "name": "Lunar Interior Reset", "name_id": "Reset Interior Lunar", "category": "Detailing", "category_id": "Detailing", "description": "Refresh the cabin with vacuuming and surface care.", "description_id": "Segarkan kabin dengan vakum dan perawatan permukaan.", "duration": "2 hours", "duration_id": "2 jam", "price": 225000, "featured": True, "features": ["Deep vacuum", "Dashboard care", "Odor refresh"]},
-    {"id": "full", "name": "Full Moon Package", "name_id": "Paket Full Moon", "category": "Premium", "category_id": "Premium", "description": "Complete exterior and interior care at home.", "description_id": "Perawatan eksterior dan interior lengkap di rumah.", "duration": "4 hours", "duration_id": "4 jam", "price": 495000, "featured": False, "features": ["Exterior detail", "Interior reset", "Protective finish"]},
+    # LIGHT SERVICE / QUICK SERVICE
+    {"id": "care", "group": "light", "name": "Essential Car Care", "name_id": "Perawatan Mobil Esensial", "category": "Light Service", "category_id": "Layanan Cepat", "description": "A practical checkup for everyday driving confidence.", "description_id": "Pemeriksaan praktis untuk berkendara sehari-hari.", "duration": "90 minutes", "duration_id": "90 menit", "price": 185000, "featured": False, "features": ["Fluid check", "Battery check", "Tire pressure"]},
+    {"id": "fluid", "group": "light", "name": "Rapid Fluid Refresh", "name_id": "Segarkan Fluida Cepat", "category": "Light Service", "category_id": "Layanan Cepat", "description": "Top-up engine oil, coolant, brake and wiper fluids.", "description_id": "Isi ulang oli mesin, coolant, minyak rem, dan wiper.", "duration": "45 minutes", "duration_id": "45 menit", "price": 135000, "featured": True, "features": ["Oil top-up", "Coolant top-up", "Brake & wiper fluid"]},
+    {"id": "tune", "group": "light", "name": "Home Tune-Up", "name_id": "Tune-Up di Rumah", "category": "Light Service", "category_id": "Layanan Cepat", "description": "Air filter, spark plug, and battery terminal service.", "description_id": "Servis filter udara, busi, dan terminal aki.", "duration": "75 minutes", "duration_id": "75 menit", "price": 210000, "featured": False, "features": ["Air filter", "Spark plugs", "Battery terminals"]},
+
+    # CAR DETAILING
+    {"id": "shine", "group": "detail", "name": "Moon Shine Detail", "name_id": "Detail Moon Shine", "category": "Detailing", "category_id": "Detailing", "description": "Deep exterior wash, polish, and paint protection.", "description_id": "Cuci eksterior, poles, dan perlindungan cat menyeluruh.", "duration": "2–3 hours", "duration_id": "2–3 jam", "price": 275000, "featured": True, "features": ["Foam wash", "Paint polish", "Tire dressing"]},
+    {"id": "interior", "group": "detail", "name": "Lunar Interior Reset", "name_id": "Reset Interior Lunar", "category": "Detailing", "category_id": "Detailing", "description": "Refresh the cabin with vacuuming and surface care.", "description_id": "Segarkan kabin dengan vakum dan perawatan permukaan.", "duration": "2 hours", "duration_id": "2 jam", "price": 225000, "featured": True, "features": ["Deep vacuum", "Dashboard care", "Odor refresh"]},
+    {"id": "glass", "group": "detail", "name": "Crystal Glass Coating", "name_id": "Lapisan Kaca Kristal", "category": "Detailing", "category_id": "Detailing", "description": "Hydrophobic glass coating for clarity in rain.", "description_id": "Lapisan kaca hidrofobik untuk pandangan jernih saat hujan.", "duration": "90 minutes", "duration_id": "90 menit", "price": 195000, "featured": False, "features": ["Glass polish", "Hydrophobic seal", "Wiper prep"]},
+
+    # MOONTIR SPECIAL CARE — bundles of detail + light
+    {"id": "full", "group": "special", "name": "Full Moon Package", "name_id": "Paket Full Moon", "category": "Special Care", "category_id": "Perawatan Spesial", "description": "Full exterior + interior detail with essential mechanical checkup.", "description_id": "Detail eksterior + interior lengkap dengan pemeriksaan mekanis esensial.", "duration": "4 hours", "duration_id": "4 jam", "price": 495000, "featured": True, "features": ["Exterior detail", "Interior reset", "Light service checkup"]},
+    {"id": "eclipse", "group": "special", "name": "Total Eclipse Care", "name_id": "Perawatan Total Eclipse", "category": "Special Care", "category_id": "Perawatan Spesial", "description": "Signature bundle: detailing, coating, and full tune-up.", "description_id": "Bundel andalan: detailing, coating, dan tune-up penuh.", "duration": "5 hours", "duration_id": "5 jam", "price": 685000, "featured": False, "features": ["Full detail", "Glass coating", "Home tune-up"]},
 ]
 
-# Multiplier by vehicle type. Sedan is baseline; larger vehicles cost more to service.
-VEHICLE_MULTIPLIERS = {
-    "Sedan": 1.00,
-    "Hatchback": 1.00,
-    "MPV": 1.15,
-    "SUV": 1.25,
-    "Truck": 1.40,
-    "Pickup": 1.30,
-}
+VEHICLE_MULTIPLIERS = {"Sedan": 1.00, "Hatchback": 1.00, "MPV": 1.15, "SUV": 1.25, "Truck": 1.40, "Pickup": 1.30}
 DEFAULT_MULTIPLIER = 1.0
 
 
@@ -85,6 +90,15 @@ class VehicleCreate(BaseModel):
     year: str = Field(min_length=4, max_length=4)
     plate: str = Field(min_length=3, max_length=12)
     type: str = Field(default="Sedan", max_length=20)
+
+
+class VehicleUpdate(BaseModel):
+    nickname: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    make: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    model: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    year: Optional[str] = Field(default=None, min_length=4, max_length=4)
+    plate: Optional[str] = Field(default=None, min_length=3, max_length=12)
+    type: Optional[str] = Field(default=None, max_length=20)
 
 
 class VehicleOut(VehicleCreate):
@@ -162,7 +176,6 @@ def auth_response(user: dict) -> AuthResponse:
 
 
 def _round_rupiah(value: float) -> int:
-    # Round to nearest 500 rupiah for clean pricing.
     return int(round(value / 500.0) * 500)
 
 
@@ -171,21 +184,10 @@ def price_breakdown(service: dict, vehicle_type: str) -> dict:
     base = int(service["price"])
     total = _round_rupiah(base * multiplier)
     surcharge = total - base
-    items: List[dict] = [
-        {"label": service["name"], "label_id": service["name_id"], "amount": base},
-    ]
+    items: List[dict] = [{"label": service["name"], "label_id": service["name_id"], "amount": base}]
     if surcharge > 0:
-        label = f"{vehicle_type} handling surcharge"
-        label_id = f"Biaya penanganan {vehicle_type}"
-        items.append({"label": label, "label_id": label_id, "amount": surcharge})
-    return {
-        "items": items,
-        "total": total,
-        "multiplier": multiplier,
-        "vehicle_type": vehicle_type,
-        "base": base,
-        "surcharge": surcharge,
-    }
+        items.append({"label": f"{vehicle_type} handling surcharge", "label_id": f"Biaya penanganan {vehicle_type}", "amount": surcharge})
+    return {"items": items, "total": total, "multiplier": multiplier, "vehicle_type": vehicle_type, "base": base, "surcharge": surcharge}
 
 
 @api_router.get("/")
@@ -254,6 +256,30 @@ async def create_vehicle(input: VehicleCreate, user: dict = Depends(current_user
     vehicle = {**input.model_dump(), "id": str(uuid.uuid4()), "user_id": user["id"], "created_at": now_iso()}
     await db.vehicles.insert_one(vehicle)
     return VehicleOut(**{k: v for k, v in vehicle.items() if k != "user_id"})
+
+
+@api_router.patch("/vehicles/{vehicle_id}", response_model=VehicleOut)
+async def update_vehicle(vehicle_id: str, input: VehicleUpdate, user: dict = Depends(current_user)):
+    updates = {k: v for k, v in input.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+    result = await db.vehicles.find_one_and_update(
+        {"id": vehicle_id, "user_id": user["id"]},
+        {"$set": updates},
+        return_document=True,
+        projection={"_id": 0, "user_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Vehicle not found.")
+    return VehicleOut(**result)
+
+
+@api_router.delete("/vehicles/{vehicle_id}")
+async def delete_vehicle(vehicle_id: str, user: dict = Depends(current_user)):
+    deleted = await db.vehicles.delete_one({"id": vehicle_id, "user_id": user["id"]})
+    if deleted.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Vehicle not found.")
+    return {"ok": True, "id": vehicle_id}
 
 
 async def nominatim(path: str, params: dict):

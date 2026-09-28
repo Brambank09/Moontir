@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 4: validated backend PATCH/DELETE /api/vehicles endpoints and new /api/services `group` classification, plus regression across auth, /api/me PATCH, /api/quote, /api/orders and geocode. 28/28 pytest cases pass. Frontend mobile (375x667) walkthrough: sign-in renders new MOONTIR wordmark logo + tagline 'AT-HOME SERVICE, MINDFUL MOMENTS.' and 'Premium car care.' title on cream palette; Home shows 'Good morning, <name>.', 'BOOK NOW' pill triggers the wizard, and the three EXPLORE circles (LIGHT SERVICE / CAR DETAILING / MOONTIR SPECIAL CARE) each open Services tab pre-filtered to their group; Services search + ALL/light/detail/special chips work; tapping a service row opens the booking wizard for that service; Garage vehicle cards show working edit (opens 'Edit vehicle' sheet, PATCH persists) and delete (opens 'Remove vehicle' confirm sheet with Cancel/Remove); Profile Appearance cycles System→Light→Dark with toast 'Theme updated · <mode>' and repaints the app (verified via screenshots in light + dark palettes); full 5-step booking wizard confirms an order (Rp 135.000 Rapid Fluid Refresh) that appears in Orders, and the invoice modal renders SERVICE TIMELINE + INVOICE DETAIL correctly. No React Native deprecated package issues observed (no expo-av / expo-barcode-scanner / expo-background-fetch usage). Two Metro warnings about `shadow*` style props are cosmetic only.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Services", "issues": ["Search bar is AND-combined with the active chip filter, so typing 'coating' while the LIGHT chip is active hides Crystal Glass Coating (a detail-group service). The review brief expects search to work 'across groups'. Consider auto-switching filter to 'all' when the user starts typing, or making search chip-agnostic. Reference: /app/frontend/app/index.tsx:340-345 and :376."]},
+      {"screen": "Sign-in", "issues": ["Wordmark logo image renders extremely small in the header bar (top-left inside authed screens); on the sign-in screen it renders at a readable size but the same MoontirLogo instance inside the top nav bar (Profile / Garage / Orders headers) is visually tiny and the crescent 'o' is barely discernible. Reference: /app/frontend/src/components/MoontirLogo.tsx (verify default size prop) and usage in /app/frontend/app/index.tsx top-bar."]}
+    ],
+    "react_native_issues": [
+      {"component": "StyleSheet shadow props", "issue": "Metro warns: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' (2 occurrences during boot). Reference: /app/frontend/app/index.tsx StyleSheet.create — replace shadowColor/shadowOffset/shadowOpacity/shadowRadius with boxShadow for react-native-web 0.19+."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_moontir_regression.py",
+    "/app/test_reports/pytest/pytest_results_iteration4.xml",
+    "/app/test_reports/ui/iter4_services_from_circle.jpeg",
+    "/app/test_reports/ui/iter4_services_all.jpeg",
+    "/app/test_reports/ui/iter4_edit_sheet.jpeg",
+    "/app/test_reports/ui/iter4_delete_confirm.jpeg",
+    "/app/test_reports/ui/iter4_profile_before_theme.jpeg",
+    "/app/test_reports/ui/iter4_profile_after_theme1.jpeg",
+    "/app/test_reports/ui/iter4_profile_after_theme2.jpeg",
+    "/app/test_reports/ui/iter4_after_confirm.jpeg",
+    "/app/test_reports/ui/iter4_invoice.jpeg"
+  ],
+  "action_items": [
+    "OPTIONAL polish: when the user types in the Services search box, auto-reset filter chip to 'all' (or gate filtering by search only) so search truly crosses groups per the brief.",
+    "OPTIONAL: enlarge the MoontirLogo default size in the authenticated top-bar (currently the crescent 'o' between M/NTIR is barely visible on 375-wide mobile).",
+    "OPTIONAL: migrate shadow* StyleSheet props to boxShadow to silence Metro deprecation warnings on react-native-web."
+  ],
+  "critical_code_review_comments": [
+    "server.py PATCH /api/vehicles/{id} uses find_one_and_update with return_document=True and projection excluding _id + user_id — correctly returns VehicleOut without any Mongo _id leak; empty body raises 400, foreign/missing id yields 404 (verified).",
+    "server.py DELETE /api/vehicles/{id} scoped by user_id — cross-user delete correctly returns 404; owner delete returns {ok, id} and the row disappears from GET /api/vehicles (verified).",
+    "SERVICES list is now 8 items with `group` in {light, detail, special}, matching the frontend chip filter contract and PRD. No hardcoded pricing changed for existing ids.",
+    "Frontend index.tsx: filter+search are AND-combined which contradicts the review brief phrasing 'search across groups' — flagged in design_issues.",
+    "React Native shadow* StyleSheet properties trigger deprecation warnings on react-native-web 0.19+."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_moontir_regression.py",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "100% for tested flows (sign-in, home, explore circles, services search+chips, booking wizard 5 steps, garage edit+delete, profile theme cycle, orders, invoice)"},
+  "seed_data_creation": "pytest module fixtures registered two TEST_<uuid>@example.com users and a small set of TEST vehicles + 2 TEST orders per run; created a real order on the seed account via UI (Rapid Fluid Refresh, Rp 135.000). All test data prefixed with TEST_ where possible.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Live preview: https://moontir-client.preview.emergentagent.com. Seed creds in /app/memory/test_credentials.md. Key testIDs: explore circles=cat-<label>, services search=service-search, chips=filter-{all|light|detail|special}, service rows=service-<id>, booking flow=booking-service-<id> / booking-vehicle-<id> / address-input / address-map (Leaflet iframe on web) / date-<val> / slot-<val> / booking-next / confirm-order, garage=vehicle-edit-<id> / vehicle-delete-<id> + confirm-cancel / confirm-delete, profile=profile-theme (System→Light→Dark), toast text 'Theme updated · <mode>'. Backend test file: /app/backend/tests/test_moontir_regression.py (28 tests, all currently green).",
+  "rca_of_issue": "No open bug — all reported items are optional polish. Search+chip AND-combination is a UX interpretation choice; if brief intent must be enforced verbatim, override chip filter when search has value."
+}
